@@ -31,18 +31,13 @@ BrowserIDSvc.prototype = {
   },
 
   /**
-   * Attempt to obtain a BrowserID assertion with the specified characteristics
-   * without user interaction.
+   * Obtain a BrowserID assertion with the specified characteristics.
    *
    * @param cb
    *        (function) Callback to be called with (err, assertion)
-   *        where "err" can be an Error or NULL, and "assertion" can
+   *        where 'err' can be an Error or NULL, and 'assertion' can
    *        be NULL or a valid BrowserID assertion. If no callback
    *        is provided, an exception is thrown.
-   *
-   * @param audience
-   *        (string) The domain for which the assertion is to be issued.
-   *        If one is not provided, an exception is thrown.
    *
    * @param options
    *        (Object) An (optional) object that may contain the following
@@ -51,10 +46,11 @@ BrowserIDSvc.prototype = {
    *          "requiredEmail" : An email for which the assertion is to be
    *                            issued. If one could not be obtained, the call
    *                            will fail. If this property is not specified,
-   *                            and "sameEmailAs" is also absent, the default
-   *                            email as set by the user will be chosen. If both
-   *                            this property and "sameEmailAs" are set, an
-   *                            exception will be thrown.
+   *                            the default email as set by the user will be
+   *                            chosen. If both this property and "sameEmailAs"
+   *                            are set, an exception will be thrown. If
+   *                            this property is set, the "window" argument
+   *                            will be ignored.
    *
    *          "sameEmailAs"   : If set, instructs the function to issue an
    *                            assertion for the same email that was provided
@@ -64,72 +60,128 @@ BrowserIDSvc.prototype = {
    *                            "requiredEmail" are set, an exception will be
    *                            thrown.
    *
-   *        Any properties not listed above will be ignored.
+   *          "audience"      : The audience for which the assertion is to be
+   *                            issued. If this property is not set, and the
+   *                            "window" argument is undefined, an exception
+   *                            will be thrown. If the "window" argument is
+   *                            provided, this property will be ignored, and an
+   *                            assertion will be provided with an audience set
+   *                            to the same domain as what "window" currently
+   *                            has loaded.
+   *
+   *        Any properties not listed above will be ignored. If neither
+   *        "requiredEmail", "sameEmailAs", or "window" are set, an exception
+   *        will be thrown.
+   *
+   * @param win
+   *        (Window) A (optional) contentWindow that has a valid document
+   *        loaded. If this argument is provided the user will be
+   *        asked to login in the context of the document currently loaded
+   *        in this window.
+   *        
+   *        The audience of the assertion will be set to the
+   *        domain of the loaded document, and the "audience" property in the
+   *        "options" argument (if provided), will be ignored. The email to
+   *        which this assertion issued will be selected by the user when they
+   *        login (and "requiredEmail" or "sameEmailAs", if provided, will
+   *        be ignored). If the user chooses to not login, this call will fail.
+   *
+   *        Be aware! The provided contentWindow must also have loaded the
+   *        BrowserID include.js shim for this to work! This behavior is
+   *        temporary until we implement native support for navigator.id.
+   *
+   * This function could use some love in terms of what arguments it accepts.
+   * Bug 746401.
    */
-  getAssertion: function getAssertion(cb, audience, options) {
+  getAssertion: function getAssertion(cb, options, win) {
     if (!cb) {
       throw new Error("getAssertion called without a callback");
-    }
-    if (!audience) {
-      throw new Error("getAssertion called without an audience");
     }
     if (options) {
       if (options.requiredEmail && options.sameEmailAs) {
         throw new Error("requiredEmail and sameEmailAs are mutually exclusive");
       }
+    } else if (!win) {
+      throw new Error(
+        "At least one of requiredEmail, sameEmailAs, or window must be provided"
+      );
+    }
+    if (!options.audience && !win) {
+      throw new Error("Either audience or window must be provided");
+    }
+
+    if (win) {
+      this.getAssertionWithLogin(cb, win);
+      return;
     }
 
     let self = this;
     this._getSandbox(function _gotSandbox(sandbox) {
-      self._getEmails(sandbox, cb, audience, options);
+      self._getEmails(sandbox, cb, options);
     });
   },
 
+  // Try to get the user's email(s). If user isn't logged in, this will be empty
+  _getEmails: function _getEmails(sandbox, cb, options) {
+    let self = this;
+    function callback(res) {
+      let emails = {};
+      try {
+        emails = JSON.parse(res);
+      } catch (e) {
+        self._log.error("Exception in JSON.parse for _getAssertion: " + e);
+      }
+      self._gotEmails(emails, sandbox, cb, options);
+    }
+    sandbox.importFunction(callback, "callback");
+    let scriptText = 
+      "var list = window.BrowserID.User.getStoredEmailKeypairs();" + 
+      "callback(JSON.stringify(list));";
+    Cu.evalInSandbox(scriptText, sandbox, "1.8", self.ID_URI, 1);
+  },
+  
+  // Received a list of emails from BrowserID for current user
+  _gotEmails: function _gotEmails(emails, sandbox, cb, options) {
+    let keys = Object.keys(list);
+
+    // If list is empty, user is not logged in, or doesn't have a default email.
+    if (!keys.length) {
+      let err = "User is not logged in, or no emails were found";
+      this._log.error(err);
+      cb(new Error(err), null);
+      return;
+    }
+
+    // User is logged in. For which email shall we get an assertion?
+
+    // Case 1: Explicitely provided
+    if (options.requiredEmail) {
+      this.getAssertionWithEmail(
+        sandbox, cb, options.requiredEmail, options.audience
+      );
+      return;
+    }
+
+    // Case 2: Derive from a given domain
+    if (options.sameEmailAs) {
+      this.getAssertionWithDomain(
+        sandbox, cb, options.sameEmailAs, options.audience
+      );
+      return;
+    }
+
+    // Case 3: Default email
+    this.getAssertionWithEmail(
+      sandbox, cb, list[0], options.audience
+    );
+    return;
+  },
+
   /**
-   * Attempt to obtain a BrowserID assertion with user interaction. You will
-   * almost always want to call getAssertion(...) to see if you can obtain
-   * one silently, and only use this method to force the user to login.
-   *
-   * @param cb
-   *        (function) Callback to be called with (err, assertion)
-   *        where 'err' can be an Error or NULL, and 'assertion' can
-   *        be NULL or a valid BrowserID assertion. If no callback
-   *        is provided, an exception is thrown.
-   *
-   * @param audience
-   *        (string) The domain for which this assertion is to be issued.
-   *        If one is not provided, an exception is thrown.
-   *
-   * @param options
-   *        (Object) getAssertionWithWindow does not support any options at
-   *        the moment, but may accept some at a later point. Pass in {}.
-   *
-   * @param iframe
-   *        (XUL:iframe) A XUL iframe in which the BrowserID login prompt
-   *        will be rendered. If you would like to be notified when the prompt
-   *        has finished rendering, please create an empty iframe and listen
-   *        for the "DOMContentLoaded" event. cb will be called when the user
-   *        finishes interacting with the iframe to login. It is the caller's
-   *        responsibility to correctly clean up the iframe, but do not do it
-   *        before you receive the callback from this function!
-   *
+   * Open a login window and ask the user to login, returning the assertion
+   * generated as a result to the caller.
    */
-  getAssertionWithLogin: function getAssertionWithLogin(
-    cb, audience, options, iframe) {
-
-    if (!cb) {
-      throw new Error("getAssertionWithLogin called without a callback");
-    }
-    if (!audience) {
-      throw new Error("getAssertionWithLogin called without an audience");
-    }
-    if (!options) {
-      throw new Error("getAssertionWithLogin called without any options");
-    }
-    if (!iframe) {
-      throw new Error("getAssertionWithLogin called without an iframe");
-    }
-
+  getAssertionWithLogin: function getAssertionWithLogin(cb, win) {
     //TODO: Executing the code directly in win will blocks the BrowserID popup.
     let sandbox = new Cu.Sandbox(win, {
       wantXrays:        false,
@@ -169,69 +221,13 @@ BrowserIDSvc.prototype = {
     }
   },
 
-  // Try to get the user's email(s). If user isn't logged in, this will be empty
-  _getEmails: function _getEmails(sandbox, cb, audience, options) {
-    let self = this;
-    function onGetEmails(res) {
-      let emails = {};
-      try {
-        emails = JSON.parse(res);
-      } catch (e) {
-        self._log.error("Exception in JSON.parse for _getEmails: " + e);
-      }
-      self._gotEmails(emails, sandbox, cb, audience, options);
-    }
-    sandbox.importFunction(onGetEmails);
-    let scriptText = 
-      "var list = window.BrowserID.User.getStoredEmailKeypairs();" + 
-      "onGetEmails(JSON.stringify(list));";
-    Cu.evalInSandbox(scriptText, sandbox, "1.8", self.ID_URI, 1);
-  },
-  
-  // Received a list of emails from BrowserID for current user
-  _gotEmails: function _gotEmails(emails, sandbox, cb, audience, options) {
-    let keys = Object.keys(list);
-
-    // If list is empty, user is not logged in, or doesn't have a default email.
-    if (!keys.length) {
-      let err = "User is not logged in, or no emails were found";
-      this._log.error(err);
-      cb(new Error(err), null);
-      return;
-    }
-
-    // User is logged in. For which email shall we get an assertion?
-
-    // Case 1: Explicitly provided
-    if (options.requiredEmail) {
-      this._getAssertionWithEmail(
-        sandbox, cb, options.requiredEmail, audience
-      );
-      return;
-    }
-
-    // Case 2: Derive from a given domain
-    if (options.sameEmailAs) {
-      this._getAssertionWithDomain(
-        sandbox, cb, options.sameEmailAs, audience
-      );
-      return;
-    }
-
-    // Case 3: Default email address
-    this._getAssertionWithEmail(
-      sandbox, cb, list[0], audience
-    );
-    return;
-  },
-
   /**
    * Gets an assertion for the specified 'email' and 'audience'
    */
-  _getAssertionWithEmail: function _getAssertionWithEmail(
-    sandbox, cb, email, audience) {
-
+  getAssertionWithEmail: function getAssertionWithEmail(sandbox, cb, email,
+                                                        audience) {
     let self = this;
+
     function onSuccess(res) {
       // The internal API sometimes calls onSuccess even though no assertion
       // could be obtained! Double check:
@@ -266,10 +262,9 @@ BrowserIDSvc.prototype = {
    * Gets the email which was used to login to 'domain'. If one was found,
    * _getAssertionWithEmail is called to obtain the assertion.
    */
-  _getAssertionWithDomain: function _getAssertionWithDomain(
-    sandbox, cb, domain) {
-
+  getAssertionWithDomain: function getAssertionWithDomain(sandbox, cb, domain) {
     let self = this;
+
     function onDomainSuccess(email) {
       if (email) {
         self.getAssertionWithEmail(sandbox, cb, email, domain);
@@ -277,7 +272,7 @@ BrowserIDSvc.prototype = {
         cb(new Error("No email found for _getAssertionWithDomain"), null);
       }
     }
-    sandbox.importFunction(onDomainSuccess);
+    sandbox.importFunction(onDomainSuccess, "onDomainSuccess");
 
     self._log.info("getAssertionWithDomain Started");
     let scriptText = 

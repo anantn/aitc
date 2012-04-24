@@ -1,27 +1,6 @@
 # HG changeset patch
-# Parent 42bb7c02833e2579b71e0e530a57a1b13fe80a2c
+# Parent baa67d5f65aa41b68f54c057866b5f45fc692696
 
-diff --git a/browser/modules/webappsUI.jsm b/browser/modules/webappsUI.jsm
---- a/browser/modules/webappsUI.jsm
-+++ b/browser/modules/webappsUI.jsm
-@@ -103,17 +103,16 @@ let webappsUI = {
- 
-   doInstall: function(aData, aBrowser, aWindow) {
-     let bundle = aWindow.gNavigatorBundle;
- 
-     let mainAction = {
-       label: bundle.getString("webapps.install"),
-       accessKey: bundle.getString("webapps.install.accesskey"),
-       callback: function(notification) {
--        installDone = true;
-         DOMApplicationRegistry.confirmInstall(aData);
-       }
-     };
- 
-     let requestingURI = aWindow.makeURI(aData.from);
-     let manifest = new DOMApplicationManifest(aData.app.manifest, aData.app.origin);
- 
-     let host;
 diff --git a/dom/base/Webapps.jsm b/dom/base/Webapps.jsm
 --- a/dom/base/Webapps.jsm
 +++ b/dom/base/Webapps.jsm
@@ -40,26 +19,7 @@ diff --git a/dom/base/Webapps.jsm b/dom/base/Webapps.jsm
  Cu.import("resource://gre/modules/XPCOMUtils.jsm");
  Cu.import("resource://gre/modules/Services.jsm");
  Cu.import("resource://gre/modules/FileUtils.jsm");
-@@ -46,17 +46,17 @@ let DOMApplicationRegistry = {
-     this.appsFile = FileUtils.getFile(DIRECTORY_NAME, ["webapps", "webapps.json"], true);
- 
-     if (!this.appsFile.exists())
-       return;
- 
-     this._loadJSONAsync(this.appsFile, (function(aData) { this.webapps = aData; }).bind(this));
- 
-     try {
--      let hosts = Services.prefs.getCharPref("dom.mozApps.whitelist")
-+      let hosts = Services.prefs.getCharPref("dom.mozApps.whitelist");
-       hosts.split(",").forEach(function(aHost) {
-         Services.perms.add(Services.io.newURI(aHost, null, null), "webapps-manage",
-                            Ci.nsIPermissionManager.ALLOW_ACTION);
-       });
-     } catch(e) { }
-   },
- 
-   observe: function(aSubject, aTopic, aData) {
-@@ -168,48 +168,50 @@ let DOMApplicationRegistry = {
+@@ -171,48 +171,50 @@ let DOMApplicationRegistry = {
  
      // install an application again is considered as an update
      if (id) {
@@ -121,7 +81,7 @@ diff --git a/dom/base/Webapps.jsm b/dom/base/Webapps.jsm
    },
  
    /**
-@@ -225,34 +227,37 @@ let DOMApplicationRegistry = {
+@@ -228,34 +230,37 @@ let DOMApplicationRegistry = {
      let id = aData[index].id;
      let file = FileUtils.getFile(DIRECTORY_NAME, ["webapps", id, "manifest.json"], true);
      this._loadJSONAsync(file, (function(aJSON) {
@@ -161,7 +121,7 @@ diff --git a/dom/base/Webapps.jsm b/dom/base/Webapps.jsm
    },
  
    getSelf: function(aData) {
-@@ -291,17 +296,17 @@ let DOMApplicationRegistry = {
+@@ -294,17 +299,17 @@ let DOMApplicationRegistry = {
        ppmm.sendAsyncMessage("Webapps:GetInstalled:Return:OK", aData);
      }).bind(this));
    },
@@ -180,7 +140,7 @@ diff --git a/dom/base/Webapps.jsm b/dom/base/Webapps.jsm
      this._readManifests(tmp, (function(aResult) {
        for (let i = 0; i < aResult.length; i++)
          aData.apps[i].manifest = aResult[i].manifest;
-@@ -319,28 +324,32 @@ let DOMApplicationRegistry = {
+@@ -322,28 +327,32 @@ let DOMApplicationRegistry = {
        return;
      }
  
@@ -218,7 +178,7 @@ diff --git a/dom/base/Webapps.jsm b/dom/base/Webapps.jsm
        if (record.deleted) {
          if (!this.webapps[record.id])
            continue;
-@@ -348,125 +357,98 @@ let DOMApplicationRegistry = {
+@@ -351,125 +360,98 @@ let DOMApplicationRegistry = {
          delete this.webapps[record.id];
          let dir = FileUtils.getDir(DIRECTORY_NAME, ["webapps", record.id], true, true);
          try {

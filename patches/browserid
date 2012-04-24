@@ -1,10 +1,10 @@
 # HG changeset patch
-# Parent 8fc61cdd2a71d07ed7f476fc572c36d465724799
+# Parent e99c1619dbfdd0ad283328f781b2a4d99a5c6da1
 
 diff --git a/allmakefiles.sh b/allmakefiles.sh
 --- a/allmakefiles.sh
 +++ b/allmakefiles.sh
-@@ -152,10 +152,13 @@ done
+@@ -158,10 +158,13 @@ done
  # Toolkit makefiles
  if [ ! "$LIBXUL_SDK" ]; then
    . "${srcdir}/toolkit/toolkit-makefiles.sh"
@@ -30,18 +30,18 @@ diff --git a/browser/build.mk b/browser/build.mk
  tier_app_dirs += services
  endif
  
-+ifdef MOZ_IDENTITY
++ifdef MOZ_SERVICES_IDENTITY
 +tier_app_dirs += identity
 +endif
 +
+ ifdef MOZ_WEBAPP_RUNTIME
+ tier_app_dirs += webapprt
+ endif
+ 
  tier_app_dirs += browser
  # Never add other tier_app_dirs after browser. They won't get packaged
  # properly on mac.
  
- ################################################
- # Parallel build on Windows with GNU make check
- 
- default::
 diff --git a/browser/confvars.sh b/browser/confvars.sh
 --- a/browser/confvars.sh
 +++ b/browser/confvars.sh
@@ -66,7 +66,7 @@ diff --git a/browser/confvars.sh b/browser/confvars.sh
 diff --git a/config/autoconf.mk.in b/config/autoconf.mk.in
 --- a/config/autoconf.mk.in
 +++ b/config/autoconf.mk.in
-@@ -675,16 +675,18 @@ WRAP_SYSTEM_INCLUDES = @WRAP_SYSTEM_INCL
+@@ -679,16 +679,18 @@ WRAP_SYSTEM_INCLUDES = @WRAP_SYSTEM_INCL
  HAVE_ARM_SIMD = @HAVE_ARM_SIMD@
  HAVE_ARM_NEON = @HAVE_ARM_NEON@
  HAVE_GCC_ALIGN_ARG_POINTER = @HAVE_GCC_ALIGN_ARG_POINTER@
@@ -77,18 +77,18 @@ diff --git a/config/autoconf.mk.in b/config/autoconf.mk.in
  
 +MOZ_IDENTITY = @MOZ_IDENTITY@
 +
+ MOZ_WEBAPP_RUNTIME = @MOZ_WEBAPP_RUNTIME@
+ 
  MOZ_OFFICIAL_BRANDING = @MOZ_OFFICIAL_BRANDING@
  
  HAVE_CLOCK_MONOTONIC = @HAVE_CLOCK_MONOTONIC@
  REALTIME_LIBS = @REALTIME_LIBS@
  
  MOZ_APP_COMPONENT_LIBS = @MOZ_APP_COMPONENT_LIBS@
- MOZ_APP_EXTRA_LIBS = @MOZ_APP_EXTRA_LIBS@
- 
 diff --git a/configure.in b/configure.in
 --- a/configure.in
 +++ b/configure.in
-@@ -8295,16 +8295,22 @@ if test "$MOZ_PLACES"; then
+@@ -8341,16 +8341,22 @@ if test "$MOZ_PLACES"; then
  fi
  
  dnl Build Sync Services if required
@@ -658,24 +658,3 @@ new file mode 100644
 +
 +# Test load modules first so syntax failures are caught early.
 +[test_load_modules.js]
-diff --git a/testing/xpcshell/xpcshell.ini b/testing/xpcshell/xpcshell.ini
---- a/testing/xpcshell/xpcshell.ini
-+++ b/testing/xpcshell/xpcshell.ini
-@@ -66,16 +66,17 @@ skip-if = os == "android"
- [include:widget/tests/unit/xpcshell.ini]
- [include:content/base/test/unit/xpcshell.ini]
- [include:content/test/unit/xpcshell.ini]
- [include:toolkit/components/url-classifier/tests/unit/xpcshell.ini]
- [include:services/common/tests/unit/xpcshell.ini]
- [include:services/crypto/tests/unit/xpcshell.ini]
- [include:services/crypto/components/tests/unit/xpcshell.ini]
- [include:services/sync/tests/unit/xpcshell.ini]
-+[include:identity/modules/tests/unit/xpcshell.ini]
- # Bug 676978: tests hang on Android 
- skip-if = os == "android"
- [include:browser/components/dirprovider/tests/unit/xpcshell.ini]
- [include:browser/components/feeds/test/unit/xpcshell.ini]
- [include:browser/components/migration/tests/unit/xpcshell.ini]
- [include:browser/components/places/tests/unit/xpcshell.ini]
- [include:browser/components/privatebrowsing/test/unit/xpcshell.ini]
- [include:browser/components/shell/test/unit/xpcshell.ini]

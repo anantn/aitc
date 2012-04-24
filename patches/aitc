@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent b090a39812a50774dc1b9a3970d62d8b9dbe824a
+# Parent b2b7011465acf146c99788ef2aa1603132ccac4c
 
 diff --git a/services/Makefile.in b/services/Makefile.in
 --- a/services/Makefile.in
@@ -1059,7 +1059,7 @@ diff --git a/testing/xpcshell/xpcshell.ini b/testing/xpcshell/xpcshell.ini
  [include:services/crypto/tests/unit/xpcshell.ini]
  [include:services/crypto/components/tests/unit/xpcshell.ini]
  [include:services/sync/tests/unit/xpcshell.ini]
- [include:identity/modules/tests/unit/xpcshell.ini]
  # Bug 676978: tests hang on Android 
  skip-if = os == "android"
  [include:browser/components/dirprovider/tests/unit/xpcshell.ini]
+ [include:browser/components/downloads/test/unit/xpcshell.ini]
