@@ -11,6 +11,7 @@ const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 Cu.import("resource://gre/modules/NetUtil.jsm");
 Cu.import("resource://gre/modules/Webapps.jsm");
 Cu.import("resource://gre/modules/FileUtils.jsm");
+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
 Cu.import("resource://services-common/rest.js");
 Cu.import("resource://services-common/log4moz.js");
@@ -33,9 +34,12 @@ function AitcQueue(filename) {
   this._writeLock = false;
   this._file = FileUtils.getFile("ProfD", ["webapps", filename], true);
 
+  let self = this;
   if (this._file.exists()) {
     this._getFile(function _gotFile(data) {
-      this._queue = data;
+      if (data) {
+        self._queue = data;
+      }
     });
   }
 }
@@ -121,7 +125,7 @@ AitcQueue.prototype = {
       let data = null;
       try {
         data = JSON.parse(
-          NetUtil.readInputStreamToString(stream, stream.available()) || ""
+          NetUtil.readInputStreamToString(stream, stream.available()) || "[]"
         );
         stream.close();
         if (cb) {
@@ -175,7 +179,7 @@ AitcQueue.prototype = {
  * An interface to DOMApplicationRegistry, used by manager.js to process
  * remote changes received and apply them to the local registry.
  */
-function AitcStorage() {
+function AitcStorageImpl() {
   this._log = Log4Moz.repository.getLogger("Service.AITC.Storage");
   this._log.level = Log4Moz.Level[Preferences.get(
     "services.aitc.log.logger.storage"
@@ -188,7 +192,7 @@ function AitcStorage() {
     "ProfD", ["webapps", "webapps-pending.json"], true
   );
 }
-AitcStorage.prototype = {
+AitcStorageImpl.prototype = {
   /**
    * Determines what changes are to be made locally, given a list of
    * remote apps.
@@ -357,5 +361,5 @@ AitcStorage.prototype = {
 };
 
 XPCOMUtils.defineLazyGetter(this, "AitcStorage", function() {
-  return new AitcStorage();
+  return new AitcStorageImpl();
 });

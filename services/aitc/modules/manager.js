@@ -11,7 +11,6 @@ const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
 Cu.import("resource://gre/modules/Webapps.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/FileUtils.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/identity/browserid.js");
 
 Cu.import("resource://services-aitc/client.js");
@@ -142,8 +141,8 @@ AitcManager.prototype = {
     // Start the timer for GETs. In case there were pending PUTs, _checkServer
     // will automatically abort, and we'll retry after getFreq.
     this._getTimer.initWithCallback(
-      event, PREFS.get("manager.getFreq", Ci.nsITimer.TYPE_REPEATING_SLACK
-    );    
+      event, PREFS.get("manager.getFreq", Ci.nsITimer.TYPE_REPEATING_SLACK)
+    );
   },
 
   /**

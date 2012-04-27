@@ -20,7 +20,10 @@ function AitcClient(token) {
 
   this._log = Log4Moz.repository.getLogger("Services.AITC.Client");
   this._log.level = Log4Moz.Level[PREFS.get("log.level")];
-
+  let dapp = new Log4Moz.DumpAppender();
+  dapp.level = Log4Moz.Level["Info"];
+  this._log.addAppender(dapp);
+  
   this._backoff = false;
   if (PREFS.get("backoff", 0)) {
     this._backoff = true;

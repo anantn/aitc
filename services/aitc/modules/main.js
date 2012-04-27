@@ -16,7 +16,7 @@ Cu.import("resource://services-aitc/manager.js");
 Cu.import("resource://services-common/log4moz.js");
 Cu.import("resource://services-common/preferences.js");
 
-function AitcSvc() {
+function AitcImpl() {
   this._log = Log4Moz.repository.getLogger("Service.AITC");
   this._log.level = Log4Moz.Level[Preferences.get(
     "services.aitc.log.logger.service"
@@ -27,7 +27,7 @@ function AitcSvc() {
   this._log.info("Loading AitC");
   this._manager = new AitcManager();
 }
-AitcSvc.prototype = {
+AitcImpl.prototype = {
   get DASHBOARD() {
     return Preferences.get("services.aitc.dashboard.url");
   },
@@ -128,5 +128,5 @@ AitcSvc.prototype = {
 };
 
 XPCOMUtils.defineLazyGetter(this, "Aitc", function() {
-  return new AitcSvc();
+  return new AitcImpl();
 });
