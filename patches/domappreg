@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent baa67d5f65aa41b68f54c057866b5f45fc692696
+# Parent c07da299ac07f970bfcb9df02cd13fff994e616e
 
 diff --git a/dom/base/Webapps.jsm b/dom/base/Webapps.jsm
 --- a/dom/base/Webapps.jsm
@@ -19,7 +19,7 @@ diff --git a/dom/base/Webapps.jsm b/dom/base/Webapps.jsm
  Cu.import("resource://gre/modules/XPCOMUtils.jsm");
  Cu.import("resource://gre/modules/Services.jsm");
  Cu.import("resource://gre/modules/FileUtils.jsm");
-@@ -171,48 +171,50 @@ let DOMApplicationRegistry = {
+@@ -171,48 +171,51 @@ let DOMApplicationRegistry = {
  
      // install an application again is considered as an update
      if (id) {
@@ -39,6 +39,7 @@ diff --git a/dom/base/Webapps.jsm b/dom/base/Webapps.jsm
 +    let appObject = this._cloneAppObject(app);
 +    appObject.installTime = (new Date()).getTime();
 +    let appNote = JSON.stringify(appObject);
++    appNote.id = id;
 +
      let dir = FileUtils.getDir(DIRECTORY_NAME, ["webapps", id], true, true);
 -
@@ -81,7 +82,7 @@ diff --git a/dom/base/Webapps.jsm b/dom/base/Webapps.jsm
    },
  
    /**
-@@ -228,34 +230,37 @@ let DOMApplicationRegistry = {
+@@ -228,34 +231,38 @@ let DOMApplicationRegistry = {
      let id = aData[index].id;
      let file = FileUtils.getFile(DIRECTORY_NAME, ["webapps", id, "manifest.json"], true);
      this._loadJSONAsync(file, (function(aJSON) {
@@ -101,6 +102,7 @@ diff --git a/dom/base/Webapps.jsm b/dom/base/Webapps.jsm
        if (app.origin == aData.origin) {
          found = true;
 +        let appNote = JSON.stringify(this._cloneAppObject(app));
++        appNote.id = id;
 +
          delete this.webapps[id];
          let dir = FileUtils.getDir(DIRECTORY_NAME, ["webapps", id], true, true);
@@ -121,7 +123,7 @@ diff --git a/dom/base/Webapps.jsm b/dom/base/Webapps.jsm
    },
  
    getSelf: function(aData) {
-@@ -294,17 +299,17 @@ let DOMApplicationRegistry = {
+@@ -294,17 +301,17 @@ let DOMApplicationRegistry = {
        ppmm.sendAsyncMessage("Webapps:GetInstalled:Return:OK", aData);
      }).bind(this));
    },
@@ -140,7 +142,7 @@ diff --git a/dom/base/Webapps.jsm b/dom/base/Webapps.jsm
      this._readManifests(tmp, (function(aResult) {
        for (let i = 0; i < aResult.length; i++)
          aData.apps[i].manifest = aResult[i].manifest;
-@@ -322,28 +327,32 @@ let DOMApplicationRegistry = {
+@@ -322,28 +329,36 @@ let DOMApplicationRegistry = {
        return;
      }
  
@@ -150,8 +152,11 @@ diff --git a/dom/base/Webapps.jsm b/dom/base/Webapps.jsm
    },
  
 -  /** added to support the sync engine */
--
-+  /** Added to support apps in the cloud */
++  /** Added to support AITC and classic sync */
++  itemExists: function(aId) {
++    return !!this.webapps[aId];
++  },
+ 
    getAppById: function(aId) {
      if (!this.webapps[aId])
        return null;
@@ -178,7 +183,7 @@ diff --git a/dom/base/Webapps.jsm b/dom/base/Webapps.jsm
        if (record.deleted) {
          if (!this.webapps[record.id])
            continue;
-@@ -351,125 +360,98 @@ let DOMApplicationRegistry = {
+@@ -351,33 +366,29 @@ let DOMApplicationRegistry = {
          delete this.webapps[record.id];
          let dir = FileUtils.getDir(DIRECTORY_NAME, ["webapps", record.id], true, true);
          try {
@@ -201,32 +206,28 @@ diff --git a/dom/base/Webapps.jsm b/dom/base/Webapps.jsm
        }
      }
      this._saveApps(aCallback);
--  },
--
+   },
+ 
 -  /*
 -   * May be removed once sync API change
 -   */
--  getAllIDs: function() {
--    let apps = {};
--    for (let id in this.webapps) {
--      // only sync http and https apps
--      if (this.webapps[id].origin.indexOf("http") == 0)
--        apps[id] = true;
--    }
--    return apps;
--  },
--
--  wipe: function(aCallback) {
--    let ids = this.getAllIDs();
--    for (let id in ids) {
--      delete this.webapps[id];
--      let dir = FileUtils.getDir(DIRECTORY_NAME, ["webapps", id], true, true);
--      try {
--        dir.remove(true);
--      } catch (e) {
--      }
--    }
--    this._saveApps(aCallback);
+   getAllIDs: function() {
+     let apps = {};
+     for (let id in this.webapps) {
+       // only sync http and https apps
+       if (this.webapps[id].origin.indexOf("http") == 0)
+         apps[id] = true;
+     }
+     return apps;
+@@ -389,87 +400,87 @@ let DOMApplicationRegistry = {
+       delete this.webapps[id];
+       let dir = FileUtils.getDir(DIRECTORY_NAME, ["webapps", id], true, true);
+       try {
+         dir.remove(true);
+       } catch (e) {
+       }
+     }
+     this._saveApps(aCallback);
 -   }
 +  }
  };
@@ -317,3 +318,33 @@ diff --git a/dom/base/Webapps.jsm b/dom/base/Webapps.jsm
 +};
  
  DOMApplicationRegistry.init();
+diff --git a/services/sync/modules/engines/apps.js b/services/sync/modules/engines/apps.js
+--- a/services/sync/modules/engines/apps.js
++++ b/services/sync/modules/engines/apps.js
+@@ -126,18 +126,25 @@ AppTracker.prototype = {
+   _enabled: false,
+ 
+   observe: function(aSubject, aTopic, aData) {
+     switch (aTopic) {
+       case "webapps-sync-install":
+       case "webapps-sync-uninstall":
+         // ask for immediate sync. not sure if we really need this or
+         // if a lower score increment would be enough
++        let app;
+         this.score += SCORE_INCREMENT_XLARGE;
+-        this.addChangedID(aData);
++        try {
++          app = JSON.parse(aData);
++        } catch (e) {
++          this._log.error("JSON.parse failed in observer " + e);
++          return;
++        }
++        this.addChangedID(app.id);
+         break;
+       case "weave:engine:start-tracking":
+         this._enabled = true;
+         Svc.Obs.add("webapps-sync-install", this);
+         Svc.Obs.add("webapps-sync-uninstall", this);
+         break;
+       case "weave:engine:stop-tracking":
+         this._enabled = false;

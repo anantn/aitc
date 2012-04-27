@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent b2b7011465acf146c99788ef2aa1603132ccac4c
+# Parent b2f1cbecf04b834227810ce8cfd44ba10599736a
 
 diff --git a/services/Makefile.in b/services/Makefile.in
 --- a/services/Makefile.in
@@ -62,7 +62,7 @@ diff --git a/services/aitc/modules/client.js b/services/aitc/modules/client.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/client.js
-@@ -0,0 +1,492 @@
+@@ -0,0 +1,287 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -73,34 +73,28 @@ new file mode 100644
 +
 +const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 +
-+Cu.import("resource://gre/modules/Webapps.jsm");
 +Cu.import("resource://services-common/rest.js");
-+Cu.import("resource://services-common/utils.js");
 +Cu.import("resource://services-common/log4moz.js");
 +Cu.import("resource://services-common/preferences.js");
 +
 +const PREFS = new Preferences("services.aitc.client.");
 +
-+// XXX: Inline these
-+const GET_FREQ = PREFS.get("getFrequency");
-+const PUT_FREQ = PREFS.get("putFrequency");
-+
-+function AitcClient(token, registry) {
++function AitcClient(token) {
 +  this.uri = token.endpoint.replace(/\/+$/, "");
 +  this.token = {id: token.id, key: token.key};
 +
-+  this.registry = registry || DOMApplicationRegistry;
 +  this._log = Log4Moz.repository.getLogger("Services.AITC.Client");
 +  this._log.level = Log4Moz.Level[PREFS.get("log.level")];
 +
-+  this.appsLastModified = null;
++  this._backoff = false;
++  if (PREFS.get("backoff", 0)) {
++    this._backoff = true;
++  }
++
++  this._appsLastModified = null;
 +  this._log.info("Client initialized with token endpoint: " + this.uri);
 +}
 +AitcClient.prototype = {
-+  _putQueue: [],
-+  _putTimer: null,
-+  _putInProgress: false,
-+
 +  _requiredLocalKeys: [
 +    "origin", "receipts", "manifestURL", "installOrigin"
 +  ],
@@ -117,6 +111,10 @@ new file mode 100644
 +   *        (Object) The app record of the application that was just installed.
 +   */
 +  remoteInstall: function remoteInstall(app, cb) {
++    if (!cb) {
++      throw new Error("remoteInstall called without callback");
++    }
++
 +    this._putApp(this._makeRemoteApp(app), cb);
 +  },
 +
@@ -128,37 +126,67 @@ new file mode 100644
 +   *        (Object) The app record of the application that was uninstalled.
 +   */
 +  remoteUninstall: function remoteUninstall(app, cb) {
++    if (!cb) {
++      throw new Error("remoteUninstall called without callback");
++    }
++
 +    let record = this._makeRemoteApp(app);
 +    record.deleted = true;
 +    this._putApp(record, cb);
 +  },
 +
 +  /**
-+   * Do a GET to see if there's anything new for us.
++   * Fetch remote apps from server with GET.
 +   */
-+  checkServer: function checkServer(cb) {
-+    this._log.info("Starting scheduled server check");
-+    
-+    if (this._putQueue.length) {
-+      let msg = "checkServer aborted due to PUTs in progress";
-+      this._log.warn(msg);
-+      throw new Error(msg);
++  getApps: function getApps(cb) {
++    if (!cb) {
++      throw new Error("getApps called but no callback provided");
 +    }
 +
-+    this._getApps(cb, this._gotRemoteApps);
-+  },
++    if (!this._checkBackoff()) {
++      cb(null, null);
++      return;
++    }
 +
-+  /**
-+   * Utility methods.
-+   */
-+  _error: function _error(req) {
-+    this._log.error("Catch-all error for request for: " + 
-+      req.uri.asciiSpec + req.response.status + " with: " + req.response.body);
-+  },
++    let uri = this.uri + "/apps/?full=1";
++    let req = new TokenAuthenticatedRESTRequest(uri, this.token);
++    if (this._appsLastModified) {
++      req.setHeader("x-if-modified-since", this._appsLastModified);
++    }
 +
-+  _makeAppURI: function _makeAppURI(origin) {
-+    let part = CryptoUtils.sha1Base64URLFriendly(origin);
-+    return this.uri + "/apps/" + part;
++    let self = this;
++    req.get(function(error) {
++      if (error) {
++        self._log.error("getApps request error " + error);
++        cb(error, null);
++        return;
++      }
++
++      // Set X-Backoff or Retry-After, if needed
++      self._setBackoff(req);
++      
++      // Process response
++      if (req.response.status == 304) {
++        self._log.info("getApps returned 304");
++        cb(null, null);
++        return;
++      }
++      if (req.response.status != 200) {
++        self._error(req);
++        cb(new Error("Unexpected error with getApps"), null);
++        return;
++      }
++
++      try {
++        let tmp = JSON.parse(req.response.body);
++        self._log.info("getApps succeeded and got " + tmp.length + " apps");
++        cb(null, tmp["apps"]);
++        // Don't update lastModified until we know cb succeeded.
++        self._appsLastModified = parseInt(req.response.headers['x-timestamp']);
++      } catch (e) {
++        self._log.error("Exception in getApps " + e);
++      }
++    });
 +  },
 +
 +  /**
@@ -214,163 +242,22 @@ new file mode 100644
 +  },
 +
 +  /**
-+   * Receive remote apps, proceed to get local apps for processing.
-+   */
-+  _gotRemoteApps: function _gotRemoteApps(error, remoteApps) {
-+    if (error) {
-+      this._log.error("_getApps failed, will retry on next _checkServer");
-+      return;
-+    } else if (!remoteApps) {
-+      this._log.info("_getApps got no new apps");
-+      return;
-+    }
-+    
-+    // _processApps checks for the validity of remoteApps.
-+    let self = this;
-+    this._log.info("Server check got " + remoteApps.length + "apps");
-+    DOMApplicationRegistry.getAllWithoutManifests(
-+      function _checkServerGotLocalApps(localApps) {
-+        self._processApps(remoteApps, localApps, function _checkServerGotApps() {
-+          self._log.info("processResponse completed and saved result");
-+        });
-+      }
-+    );
-+  },
-+
-+  /**
-+   * Fetch remote apps from server.
-+   */
-+  _getApps: function _getApps(originalCb, cb) {
-+    if (!cb) {
-+      throw new Error("getApps called but no callback provided");
-+    }
-+
-+    // If there's an unfinished PUT or a PUT that didn't succeed, just bail.
-+    if (this._putQueue.length) {
-+      this._log.warn("getApps called, but aborting due to outstanding PUT(s)!");
-+      throw new Error("PUT(s) in progress, aborting GET!");
-+    }
-+
-+    let req = new TokenAuthenticatedRESTRequest(this.uri + "/apps/?full=1",
-+                                                this.token);
-+    if (this.appsLastModified) {
-+      req.setHeader("X-If-Modified-Since", this.appsLastModified);
-+    }
-+
-+    let self = this;
-+    req.get(function(error) {
-+      if (error) {
-+        self._log.error("_getApps request error " + error);
-+        originalCb(error, null);
-+        return;
-+      }
-+      if (req.response.status == 304) {
-+        self._log.info("_getApps returned 304");
-+        originalCb(null, null);
-+        return;
-+      }
-+      if (req.response.status != 200) {
-+        self._error(req);
-+        originalCb(new Error("Unexpected error with getApps"), null);
-+        return;
-+      }
-+
-+      try {
-+        let tmp = JSON.parse(req.response.body);
-+        self._log.info("_getApps succeeded");
-+        cb(null, tmp["apps"]);
-+        // Don't update lastModified until we know cb succeeded.
-+        self.appsLastModified = parseInt(req.response.headers['x-timestamp']);
-+      } catch (e) {
-+        self._log.error("Exception in _getApps " + e);
-+      }
-+    });
-+  },
-+
-+  /**
-+   * Add a PUT request to the queue.
-+   */
-+  _putApp: function _putApp(appRec, appLastModified) {
-+    this._putQueue.push({
-+      record:   appRec,
-+      modified: appLastModified
-+    });
-+    this._processPutQueue();
-+  },
-+
-+  /**
-+   * Go through list of apps to PUT and attempt them. If we fail any, try
-+   * them again PUT_FREQ.
-+   * XXX: Sequentiall fire PUT requests from the queueu.
-+   */
-+  _processPutQueue: function _processPutQueue() {
-+    if (this._putInProgress) {
-+      // The network requests sent out as a result to the last call to
-+      // _processPutQueue still aren't done. A timer is created they all
-+      // finish to make sure this function is called again if neccessary.
-+      return;
-+    }
-+
-+    // If we're done with PUTs, stop timer
-+    if (!this._putQueue.length) {
-+      if (this._putTimer) {
-+        this._putTimer.cancel();
-+      }
-+      return;
-+    }
-+    
-+    // Copy current state of _putQueue.
-+    let done = 0;
-+    let unfinished = [];
-+
-+    // XXX: copy
-+    let processNow = this._putQueue;
-+
-+    // We should empty out _putQueue now so we can know if there were any new
-+    // apps added by calls to _putApp when we are finished. However, many
-+    // places in the code check for _putQueue.length to know if there are
-+    // outstanding PUTs, so we put a dummy value in it.
-+    this._putQueue = ["DUMMY_APP"];
-+
-+    let self = this;
-+    for (let i = 0; i < processNow.length; i++) {
-+
-+      let app = processNow[i];
-+      this._tryPuttingApp(app, function(err, success) {
-+        // Add back to queue if unsuccessful or err.removeFromQueue is false.
-+        if (err && !err.removeFromQueue) {
-+          unfinished.push(app);
-+        }
-+
-+        // Check if this the last app in the queue to finish
-+        done += 1
-+        if (done == processNow.length) {
-+          // Merge any apps that were added while we were busy and the
-+          // unfinished ones (put new apps first).
-+          self._putQueue = self._putQueue.concat(unfinished);
-+
-+          // Remove our DUMMY_APP.
-+          self._putQueue.splice(0, 1);
-+
-+          // _processPutQueue is open for business again!
-+          self._putInProgress = false;
-+
-+          // If any apps remain in the queue, try again in a bit.
-+          if (self._putQueue.length) {
-+            CommonUtils.namedTimer(
-+              self._processPutQueue, PUT_FREQ, self, "_putTimer"
-+            );
-+          }
-+        }
-+      });
-+    }
-+  },
-+
-+  /**
 +   * Try PUT for an app on the server and determine if we should retry
 +   * if it fails.
 +   */
-+  _tryPuttingApp: function _tryPuttingApp(app, cb) {
++  _putApp: function _putApp(app, cb) {
++    if (!this._checkBackoff) {
++      // PUT requests may qualify as the "minimum number of additional requests
++      // required to maintain consistency of their stored data". However, it's
++      // better to keep server load low, even if it means user's apps won't
++      // reach their other devices during the early days of AITC. We should
++      // revisit this when we have a better of idea of server load curves.
++      err = new Error("X-Backoff in effect, aborting PUT");
++      err.removeFromQueue = false;
++      cb(err, null);
++      return;
++    }
++
 +    let uri = this._makeAppURI(app.record.origin);
 +    let req = new TokenAuthenticatedRESTRequest(uri, this.token);
 +    if (app.modified) {
@@ -379,23 +266,25 @@ new file mode 100644
 +
 +    req.put(JSON.stringify(appRec), function _tryPuttingAppFinished(error) {
 +      if (error) {
-+        self._log.error("_tryPuttingApp request error " + error);
++        self._log.error("_putApp request error " + error);
 +        cb(error, null);
 +        return;
 +      }
++
++      self._setBackoff(req);
 +
 +      let err = null;
 +      switch (req.response.status) {
 +        case 201:
 +        case 204:
-+          self._log.info("_tryPuttingApp succeeded");
++          self._log.info("_putApp succeeded");
 +          cb(null, true);
 +          break;
 +
 +        case 400:
 +        case 412:
 +        case 413:
-+          let msg = "_tryPuttingApp returned: " + req.response.status;
++          let msg = "_putApp returned: " + req.response.status;
 +          self._log.warn(msg);
 +          err = new Error(msg);
 +          err.removeFromQueue = true;
@@ -404,7 +293,7 @@ new file mode 100644
 +
 +        default:
 +          self._error(req);
-+          err = new Error("Unexpected error with _tryPuttingApp");
++          err = new Error("Unexpected error with _putApp");
 +          err.removeFromQueue = false;
 +          cb(err, null);
 +          break;
@@ -413,154 +302,60 @@ new file mode 100644
 +  },
 +
 +  /**
-+   * Fetch a manifest from given URL. No retries are made on failure.
++   * Utility methods.
 +   */
-+  _getManifest: function _getManifest(url, callback)  {
-+    let req = new RESTRequest(url);
-+    req.get(function(error) {
-+      if (error) {
-+        callback(error, null);
-+        return;
-+      }
-+      if (!req.response.success) {
-+        callback(new Error("Non-200 while fetching manifest"), null);
-+        return;
-+      }
-+
-+      let err = null;
-+      let manifest = null;
-+      try {
-+        manifest = JSON.parse(req.response.body);
-+        if (!manifest.name) {
-+          self._log.warn(
-+            "_getManifest got invalid manifest: " + req.response.body
-+          );
-+          err = new Error("Invalid manifest fetched");
-+          manifest = null;
-+        }
-+      } catch (e) {
-+        self._log.warn(
-+          "_getManifest got invalid JSON response: " + req.response.body
-+        );
-+        err = new Error("Invalid manifest fetched");
-+        manifest = null;
-+      }
-+
-+      callback(err, manifest);
-+    });
++  _error: function _error(req) {
++    this._log.error("Catch-all error for request for: " + 
++      req.uri.asciiSpec + req.response.status + " with: " + req.response.body);
 +  },
 +
-+  /**
-+   * Determines what changes are to be made locally, given a list of local
-+   * and remote apps.
-+   */
-+  _processApps: function _processApps(remoteApps, lApps, callback) {
-+    let toDelete = {};
-+    let localApps = {};
-+    
-+    // Convert lApps to a dictionary of origin -> app (instead of id -> app)
-+    for (let [id, app] in Iterator(localApps)) {
-+      app.id = id;
-+      toDelete[app.origin] = app;
-+      localApps[app.origin] = app;
-+    }
-+
-+
-+    // Iterate over remote apps, and find out what changes we must apply.
-+    let toInstall = [];
-+    for each (let app in remoteApps) {
-+      // Don't delete apps that are both local & remote.
-+      let origin = app.origin;
-+      delete toDelete[origin];
-+
-+      // If there is a remote app that isn't local or 
-+      // if the remote app was installed later
-+      if ((!(origin in localApps)) ||
-+           localApps[origin].installTime < app.installTime) {
-+        
-+        let id = localApps[origin].id || DOMApplicationRegistry.makeAppId();
-+
-+        // We should install this app locally
-+        try {          
-+          let record = {id: id, value: this._makeLocalApp(app)};
-+          toInstall.push(record);
-+        } catch (e) {
-+          // App was an invalid record
-+          this._log.error("A remote app was found to be invalid " + e);
-+        }
-+      }
-+    }
-+
-+    // Uninstalls only need the ID & deleted flag
-+    let toUninstall = [];
-+    for (let origin in toDelete) {
-+      toUninstall.push({id: toDelete[origin].id, deleted: true});
-+    }
-+
-+    // Apply installs & uninstalls
-+    this._applyUpdates(toInstall, toUninstall, callback);
-+    return;
++  _makeAppURI: function _makeAppURI(origin) {
++    let part = CryptoUtils.sha1Base64URLFriendly(origin);
++    return this.uri + "/apps/" + part;
 +  },
 +
-+  /**
-+   * Applies a list of commands as determined by _processApps locally
-+   */
-+  _applyUpdates: function _applyUpdates(toInstall, toUninstall, callback) {
-+    let finalCommands = [];
-+    let toUpdate = toInstall.length;
-+
-+    let self = this;
-+    function onManifestsUpdated() {
-+      finalCommands.push(toUninstall);
-+      if (finalCommands.length) {
-+        self._log.info(
-+          "processUpdates finished fetching manifests, calling updateApps"
-+        );
-+        DOMApplicationRegistry.updateApps(finalCommands, callback);
-+      } else {
-+        self._log.info(
-+          "processUpdates finished fetching, no finalCommands were found"
-+        );
-+        callback();
-+      }
++  // Before making a request, check if we are allowed to.
++  _checkBackoff: function _checkBackoff() {
++    if (!this._backoff) {
++      return true;
 +    }
 +
-+    // Update manifests for all the new remote apps we have.
-+    let done = 0;
-+    for (let j = 0; j < toUpdate; j++) {
-+      let app = toInstall[j];
-+      let url = app.value.manifestURL;
-+      if (url[0] == "/") {
-+        url = app.value.origin + app.value.manifestURL;
-+      }
++    let time = new Date().getTime();
++    let lastReq = PREFS.get("lastReq", 0);
++    let backoff = PREFS.get("backoff", 0);
 +
-+      this._log.info("Updating manifest " + url + "\n");
-+      this._getManifest(url, function(err, manifest) {
-+        if (!err) {
-+          app.value.manifest = manifest;
-+          finalCommands.push({id: app.id, value: app.value});
-+          self._log.info(app.id + " was added to finalCommands");
-+        } else {
-+          self._log.debug("Couldn't fetch manifest at " + url + ": " + err);
-+        }
-+
-+        // Not a big deal if we couldn't get a manifest, we will try to fetch
-+        // it again on the next checkServer. Carry on.
-+        done += 1;
-+        if (done == toUpdate) {
-+          onManifestsUpdated();
-+        }
-+      });
++    if (lastReq + (backoff * 1000) < time) {
++      this._log.warn("X-Backoff is " + backoff + ", not making request");
++      return false;
 +    }
-+  }
 +
++    this._backoff = false;
++    PREFS.put("backoff", 0);
++    return true;
++  },
++
++  // Set values from X-Backoff and Retry-After headers, if present
++  _setBackoff: function _setBackoff(req) {
++    let backoff = 0;
++    PREFS.put("lastReq", new Date().getTime());
++    if (req.response.headers['x-backoff']) {
++      backoff = req.response.headers['x-backoff'];
++    }
++    if (req.response.headers['retry-after']) {
++      backoff = req.response.headers['retry-after'];
++    }
++    if (backoff) {
++      self._backoff = true;
++      PREFS.put("backoff", backoff);
++    }
++  },
 +};
 \ No newline at end of file
 diff --git a/services/aitc/modules/main.js b/services/aitc/modules/main.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/main.js
-@@ -0,0 +1,364 @@
+@@ -0,0 +1,132 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -574,12 +369,10 @@ new file mode 100644
 +Cu.import("resource://gre/modules/Webapps.jsm");
 +Cu.import("resource://gre/modules/Services.jsm");
 +Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-+Cu.import("resource://gre/modules/identity/browserid.js");
 +
-+Cu.import("resource://services-aitc/client.js");
++Cu.import("resource://services-aitc/manager.js");
 +Cu.import("resource://services-common/log4moz.js");
 +Cu.import("resource://services-common/preferences.js");
-+Cu.import("resource://services-common/tokenserverclient.js");
 +
 +function AitcSvc() {
 +  this._log = Log4Moz.repository.getLogger("Service.AITC");
@@ -590,7 +383,7 @@ new file mode 100644
 +  dapp.level = Log4Moz.Level["Info"];
 +  this._log.addAppender(dapp);
 +  this._log.info("Loading AitC");
-+  this._manager = new AitcClientManager();
++  this._manager = new AitcManager();
 +}
 +AitcSvc.prototype = {
 +  get DASHBOARD() {
@@ -598,16 +391,16 @@ new file mode 100644
 +  },
 +
 +  // The goal of the init function is to be ready to activate the AITC
-+  // client whenever the user is looking at the dashboard
++  // client whenever the user is looking at the dashboard.
 +  init: function init() {
 +    let self = this;
 +
-+    // This is called iff the user is currently looking the dashboard
++    // This is called iff the user is currently looking the dashboard.
 +    function dashboardLoaded(browser) {
 +      self._log.info("Dashboard was accessed");
 +      self._manager.userOnDashboard(browser.contentWindow);
 +    }
-+    // This is called when the user's attention is elsewhere
++    // This is called when the user's attention is elsewhere.
 +    function dashboardUnloaded() {
 +      self._log.info("Dashboard closed or in background");
 +      self._manager.userOffDashboard();
@@ -616,7 +409,7 @@ new file mode 100644
 +    // Called when a URI is loaded in any tab. We have to listen for this
 +    // because tabSelected is not called if I open a new tab which loads
 +    // about:home and then navigate to the dashboard, or navigation via
-+    // links on the currently open tab
++    // links on the currently open tab.
 +    let listener = {
 +      onLocationChange: function onLocationChange(browser, progress, req, location, flags) {
 +        let win = Services.wm.getMostRecentWindow("navigator:browser");
@@ -628,7 +421,7 @@ new file mode 100644
 +        }
 +      }
 +    };
-+    // Called when the current tab selection changes
++    // Called when the current tab selection changes.
 +    function tabSelected(event) {
 +      let browser = event.target.linkedBrowser;
 +      let uri = browser.currentURI.spec.substring(0, self.DASHBOARD.length);
@@ -639,7 +432,7 @@ new file mode 100644
 +      }
 +    }
 +
-+    // Add listeners for all windows opened in the future
++    // Add listeners for all windows opened in the future.
 +    function winWatcher(subject, topic) {
 +      if (topic != "domwindowopened") return;
 +      subject.addEventListener("load", function winWatcherLoad() {
@@ -654,14 +447,14 @@ new file mode 100644
 +    }
 +    Services.ww.registerNotification(winWatcher);
 +
-+    // Add listeners for all current open windows
++    // Add listeners for all current open windows.
 +    let enumerator = Services.wm.getEnumerator("navigator:browser");
 +    while (enumerator.hasMoreElements()) {
 +      let browser = enumerator.getNext().gBrowser;
 +      browser.addTabsProgressListener(listener);
 +      browser.tabContainer.addEventListener("TabSelect", tabSelected);
 +
-+      // Also check the currently open URI
++      // Also check the currently open URI.
 +      let uri = browser.contentDocument.location.toString().substring(
 +        0, self.DASHBOARD.length
 +      );
@@ -670,7 +463,7 @@ new file mode 100644
 +      }
 +    }
 +
-+    // Add listeners for app installs/uninstall
++    // Add listeners for app installs/uninstall.
 +    Services.obs.addObserver(this, "webapps-sync-install", false);
 +    Services.obs.addObserver(this, "webapps-sync-uninstall", false);
 +  },
@@ -692,25 +485,57 @@ new file mode 100644
 +  }
 +};
 +
-+function AitcClientManager() {
-+  this._timer = null,
++XPCOMUtils.defineLazyGetter(this, "Aitc", function() {
++  return new AitcSvc();
++});
+diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
+new file mode 100644
+--- /dev/null
++++ b/services/aitc/modules/manager.js
+@@ -0,0 +1,378 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
++ * You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++"use strict";
++
++const EXPORTED_SYMBOLS = ["AitcManager"];
++
++const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
++
++Cu.import("resource://gre/modules/Webapps.jsm");
++Cu.import("resource://gre/modules/Services.jsm");
++Cu.import("resource://gre/modules/FileUtils.jsm");
++Cu.import("resource://gre/modules/XPCOMUtils.jsm");
++Cu.import("resource://gre/modules/identity/browserid.js");
++
++Cu.import("resource://services-aitc/client.js");
++Cu.import("resource://services-aitc/storage.js");
++Cu.import("resource://services-common/log4moz.js");
++Cu.import("resource://services-common/preferences.js");
++Cu.import("resource://services-common/tokenserverclient.js");
++
++const PREFS = new Preferences("services.aitc.")
++function AitcManager() {
 +  this._client = null;
++  this._getTimer = null;
++  this._putTimer = null;
++
++  this._pending = new AitcQueue("webapps-pending.json");
++
 +  this._log = Log4Moz.repository.getLogger("Service.AITC.Manager");
-+  this._log.level = Log4Moz.Level[Preferences.get(
-+    "services.aitc.log.logger.service"
-+  )];
++  this._log.level = Log4Moz.Level[Preferences.get("manager.log.level")];
 +  let dapp = new Log4Moz.DumpAppender();
 +  dapp.level = Log4Moz.Level["Info"];
 +  this._log.addAppender(dapp);
-+  this._pending = {"install": [], "uninstall": []};
 +}
-+AitcClientManager.prototype = {
++AitcManager.prototype = {
 +  get MARKETPLACE() {
-+    return Preferences.get("services.aitc.marketplace.url");
++    return PREFS.get("marketplace.url");
 +  },
 +
 +  get TOKEN_SERVER() {
-+    return Preferences.get("services.aitc.tokenServer.url");
++    return Preferences.get("tokenServer.url");
 +  },
 +
 +  /**
@@ -718,26 +543,36 @@ new file mode 100644
 +   * is logged in.
 +   */
 +  appEvent: function appEvent(type, app) {
-+    if (this._client) {
-+      this._doAppEvent(type, app);
-+    }
-+
-+    // Silent client creation
++    // Add this to the equeue.
 +    let self = this;
-+    this._makeClient(function(err, client) {
-+      if (!err && client) {
-+        self._client = client;
-+        self._doAppEvent(type, app);
-+      } else {
-+        // Put in pending list and try later
-+        self._pending[type].push(app);
++    let obj = {type: type, app: app, retries: 0, lastTime: 0};
++    this._pending.enqueue(app, function _enqueued(err, rec) {
++      if (err) {
++        self._log.error("Could not add " + type + " " + app + " to queue");
++        return;
 +      }
++
++      // If we already have a client (i.e. user is logged in), attempt to PUT.
++      if (self._client) {
++        self._processQueue();
++        return;
++      }
++
++      // If not, try a silent client creation.
++      let self = this;
++      this._makeClient(function(err, client) {
++        if (!err && client) {
++          self._client = client;
++          self._processQueue();
++        }
++        // If user is not logged in, we'll just have to try later.
++      });
 +    });
 +  },
 +
 +  /**
-+   * User is looking at dashboard. Start polling, if user isn't logged in,
-+   * prompt for one.
++   * User is looking at dashboard. Start polling, but if user isn't logged in,
++   * prompt for them to login via a dialog.
 +   */
 +  userOnDashboard: function userOnDashboard(win) {
 +    if (this._client) {
@@ -748,7 +583,7 @@ new file mode 100644
 +    let self = this;
 +    this._makeClient(function(err, client) {
 +      if (err) {
-+        // TODO: Surface this error the user, somehow
++        // XXX: Surface this error the user, somehow?
 +        self._log.error("Client not created at Dashboard");
 +        return;
 +      }
@@ -759,7 +594,7 @@ new file mode 100644
 +
 +  /**
 +   * User is not on the dashboard, we may stop polling (though PUTs will
-+   * still continue in AitcClient).
++   * still continue to be tried).
 +   */
 +  userOffDashboard: function userOffDashboard() {
 +    if (this._client) {
@@ -767,7 +602,7 @@ new file mode 100644
 +      return;
 +    }
 +  },
-+  
++
 +  /**
 +   * Poll the AITC server for any changes and process them. Call this whenever
 +   * the user is actively looking at the apps dashboard. It is safe to call
@@ -777,27 +612,33 @@ new file mode 100644
 +    if (!this._client) {
 +      throw new Error("_startPoll called without client");
 +    }
-+    if (this._timer) {
++    if (this._getTimer) {
 +      return;
 +    }
 +
-+    // XXX: If pending, process those first.
-+
-+    // Do one GET check right now.
-+    this._client.checkServer();
-+
-+    // And then once every FREQ seconds.
-+    // TODO: Honor backoff values when we poll.
-+    this._timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
-+
++    // Create timer for GETs.
++    this._getTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
 +    let self = this;
 +    let event = {
 +      notify: function notify(timer) {
-+        self._client.checkServer();
++        self._checkServer();
 +      }
 +    };
 +
-+    this._timer.initWithCallback(event, FREQ, Ci.nsITimer.TYPE_REPEATING_SLACK);
++    // Check if there are any PUTs pending first.
++    if (this._pending.length && !this._putTimer) {
++      // There are pending PUTs and no timer, so let's process them.
++      this._processQueue();
++    } else {
++      // Do one GET check right now.
++      this._checkServer();
++    }
++
++    // Start the timer for GETs. In case there were pending PUTs, _checkServer
++    // will automatically abort, and we'll retry after getFreq.
++    this._getTimer.initWithCallback(
++      event, PREFS.get("manager.getFreq", Ci.nsITimer.TYPE_REPEATING_SLACK
++    );    
 +  },
 +
 +  /**
@@ -806,25 +647,133 @@ new file mode 100644
 +   * this function even if runPeriodically() wasn't called before.
 +   */
 +  _stopPoll: function _stopPoll() {
-+    if (!this._timer) {
++    if (!this._getTimer) {
 +      return;
 +    }
-+    this._timer.cancel();
-+    this._timer = null;
++    this._getTimer.cancel();
++    this._getTimer = null;
 +  },
 +
 +  /**
-+   * Perform a remote install or uninstall.
++   * Do a GET check on the server to see if we have any new apps. Abort if
++   * there are pending PUTs. If we GET some apps, send to storage for
++   * further processing.
 +   */
-+  _doAppEvent: function _doAppEvent(type, app) {
++  _checkServer: function _checkServer() {
 +    if (!this._client) {
-+      throw "_doAppEvent called without client";
++      throw new Error("_checkServer called without a client");
 +    }
-+    switch (type) {
++
++    if (this._pending.length) {
++      this._log.warn("_checkServer aborted because of pending PUTs");
++      return;
++    }
++
++    // Do a GET
++    this._client.getApps(function gotApps(err, apps) {
++      if (err) {
++        // Error was logged in client.
++        return;
++      }
++      if (!app) {
++        // No changes, got 304.
++        return;
++      }
++
++      // Send list of remote apps to storage to apply locally
++      AitcStorage.processApps(apps, function processedApps() {
++        this._log.info("processApps completed successfully, changes applied");
++      });
++    });
++  },
++
++  /**
++   * Go through list of apps to PUT and attempt each one. If we fail, try
++   * again in PUT_FREQ.
++   */
++  _processQueue: function _processPutQueue() {
++    if (!this._client) {
++      throw new Error("_processPutQueue called without a client");
++    }
++
++    if (!this._pending.length) {
++      this._log.info("There are no pending items, _processQueue closing");
++      if (this._putTimer) {
++        this._putTimer.clear();
++      }
++      return;
++    }
++
++    if (this._putInProgress) {
++      // The network request sent out as a result to the last call to
++      // _processPutQueue still isn't done. A timer is created they all
++      // finish to make sure this function is called again if neccessary.
++      return;
++    }
++
++    let self = this;
++    this._putInProgress = true;
++    let record = this._pending.peek();
++
++    function _clientCallback(err, done) {
++      // Send to end of queue if unsuccessful or err.removeFromQueue is false.
++      if (err && !err.removeFromQueue) {
++        // Update retries and time
++        record.retries += 1;
++        record.lastTime = new Date().getTime();
++
++        // Add updated record to the end of the queue.
++        self._pending.enqueue(record, function(err, done) {
++          if (err) {
++            self._log.error("enqueue failed " + err);
++            _reschedule();
++            return;
++          }
++          // If record was successfully added, remove old record.
++          self._pending.dequeue(function(err, done) {
++            if (err) {
++              self._log.error("dequeue failed " + err);
++            }
++            _reschedule();
++            return;
++          });
++        });
++        return;
++      }
++
++      // If succeeded or client told us to remove from queue
++      if (err.removeFromQueue || done) {
++        self._pending.dequeue(function(err, done) {
++          if (err) {
++            self._log.error("queue dequeue failed " + e);
++          }
++          _reschedule();
++        });
++        return;
++      }
++    }
++
++    function _reschedule() {
++      // If any apps remain in the queue, try again after putFreq.
++      if (self._pending.length) {
++        CommonUtils.namedTimer(
++          self._processQueue, PREFS.get("manager.putFreq"), self, "_putTimer"
++        );
++      }
++    }
++
++    switch (record.type) {
 +      case "install":
-+        this._client.remoteInstall(app); break;
++        this._client.remoteInstall(record.app, _clientCallback);
++        break;
 +      case "uninstall":
-+        this._client.remoteUninstall(app); break;
++        this._client.remoteUninstall(record.app, _clientCallback);
++        break;
++      default:
++        this._log.warn(
++          "Unrecognized type " + record.type + " in queue, removing"
++        );
++        this._pending.dequeue(_clientCallback);
 +    }
 +  },
 +
@@ -919,17 +868,381 @@ new file mode 100644
 +
 +    // Check if we can get assertion silently first
 +    BrowserID.getAssertion(gotSilentAssertion, {sameEmailAs: this.MARKETPLACE});
++  },
++
++};
+diff --git a/services/aitc/modules/storage.js b/services/aitc/modules/storage.js
+new file mode 100644
+--- /dev/null
++++ b/services/aitc/modules/storage.js
+@@ -0,0 +1,361 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
++ * You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++"use strict";
++
++const EXPORTED_SYMBOLS = ["AitcStorage", "AitcQueue"];
++
++const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
++
++Cu.import("resource://gre/modules/NetUtil.jsm");
++Cu.import("resource://gre/modules/Webapps.jsm");
++Cu.import("resource://gre/modules/FileUtils.jsm");
++
++Cu.import("resource://services-common/rest.js");
++Cu.import("resource://services-common/log4moz.js");
++Cu.import("resource://services-common/preferences.js");
++
++/**
++ * Provides a file-backed queue. Currently used by manager.js as persistent
++ * storage to manage pending installs and uninstalls.
++ */
++function AitcQueue(filename) {
++  this._log = Log4Moz.repository.getLogger("Service.AITC.Storage");
++  this._log.level = Log4Moz.Level[Preferences.get(
++    "services.aitc.storage.log.level"
++  )];
++  let dapp = new Log4Moz.DumpAppender();
++  dapp.level = Log4Moz.Level["Info"];
++  this._log.addAppender(dapp);
++
++  this._queue = [];
++  this._writeLock = false;
++  this._file = FileUtils.getFile("ProfD", ["webapps", filename], true);
++
++  if (this._file.exists()) {
++    this._getFile(function _gotFile(data) {
++      this._queue = data;
++    });
 +  }
++}
++AitcQueue.prototype = {
++  /**
++   * Add an object to the queue.
++   */
++  enqueue: function enqueue(obj, cb) {
++    if (!cb) {
++      throw new Error("enqueue called without callback");
++    }
++
++    this._queue.push(obj);
++    try {
++      this._putFile(function _enqueuePutFile() {
++        // Successful write.
++        cb(null, true);
++      });
++    } catch (e) {
++      // Write unsuccessful, don't add to queue.
++      this._queue.pop();
++      cb(new Error(e), false);
++    }
++  },
++
++  /**
++   * Remove the object at the head of the queue.
++   */
++  dequeue: function dequeue(cb) {
++    if (!cb) {
++      throw new Error("dequeue called without callback");
++    }
++    if (!this._queue.length) {
++      throw new Error("Queue is empty");
++    }
++
++    let obj = this._queue.shift();
++    try {
++      this._putFile(function _dequeuePutFile() {
++        // Successful write.
++        cb(null, true);
++      });
++    } catch (e) {
++      // Unsuccessful write, put back in queue.
++      this._queue.unshift(obj);
++      cb(new Error(e), false);
++    }
++  },
++
++  /**
++   * Return the object at the front of the queue without removing it.
++   */
++  peek: function peek(cb) {
++    if (!this._queue.length) {
++      throw new Error("Queue is empty");
++    }
++    return this._queue[0];
++  },
++
++  /**
++   * Find out the length of the queue.
++   */
++  length: function length(cb) {
++    return this._queue.length;
++  },
++
++  /**
++   * Get contents of cache file and parse it into an array. Will throw an
++   * exception if there is an error while reading the file.
++   */
++  _getFile: function _getFile(cb) {
++    let channel = NetUtil.newChannel(this._file);
++    channel.contentType = "application/json";
++    NetUtil.asyncFetch(channel, function _asyncFetched(stream, res) {
++      if (!Components.isSuccessCode(res)) {
++        Cu.reportError("Could not read from json file " + this._file.path);
++        if (cb) {
++          cb(null);
++        }
++        return;
++      }
++
++      let data = null;
++      try {
++        data = JSON.parse(
++          NetUtil.readInputStreamToString(stream, stream.available()) || ""
++        );
++        stream.close();
++        if (cb) {
++          cb(data);
++        }
++      } catch (e) {
++        Cu.reportError("Could not parse JSON " + e);
++        if (cb) {
++          cb(null);
++        }
++      }
++    });
++  },
++
++  /**
++   * Put an array into the cache file. Will throw an exception if there is
++   * an error while trying to write to the file.
++   */
++  _putFile: function _putFile(value, cb) {
++    if (this._writeLock) {
++      throw new Error("_putFile already in progress");
++    }
++
++    this._writeLock = true;
++    try {
++      let ostream = FileUtils.openSafeFileOutputStream(
++        this._file, FileUtils.MODE_CREATE // Create file if it doesn't exist
++      );
++
++      let converter = Cc["@mozilla.org/intl/scriptableunicodeconverter"].
++                      createInstance(Ci.nsIScriptableUnicodeConverter);
++      converter.charset = "UTF-8";
++
++      // Asynchronously copy the data to the file.
++      let self = this;
++      let istream = converter.convertToInputStream(JSON.stringify(value));
++      NetUtil.asyncCopy(istream, ostream, function _asyncCopied() {
++        self._writeLock = false;
++        if (cb) {
++          cb();
++        }
++      });
++    } catch (e) {
++      this._writeLock = false;
++      throw e;
++    }
++  },
 +};
 +
-+XPCOMUtils.defineLazyGetter(this, "Aitc", function() {
-+  return new AitcSvc();
++/**
++ * An interface to DOMApplicationRegistry, used by manager.js to process
++ * remote changes received and apply them to the local registry.
++ */
++function AitcStorage() {
++  this._log = Log4Moz.repository.getLogger("Service.AITC.Storage");
++  this._log.level = Log4Moz.Level[Preferences.get(
++    "services.aitc.log.logger.storage"
++  )];
++  let dapp = new Log4Moz.DumpAppender();
++  dapp.level = Log4Moz.Level["Info"];
++  this._log.addAppender(dapp);
++
++  this._file = FileUtils.getFile(
++    "ProfD", ["webapps", "webapps-pending.json"], true
++  );
++}
++AitcStorage.prototype = {
++  /**
++   * Determines what changes are to be made locally, given a list of
++   * remote apps.
++   *
++   * @param remoteApps
++   *        (Array)     An array of app records fetched from the AITC server.
++   *
++   * @param callback
++   *        (function)  A callback to be invoked when processing is finished.
++   */
++  processApps: function processApps(remoteApps, callback) {
++    let self = this;
++    this._log.info("Server check got " + remoteApps.length + "apps");
++
++    // Get the set of local apps, and then pass to _processApps.
++    // _processApps will check for the validity of remoteApps.
++    DOMApplicationRegistry.getAllWithoutManifests(
++      function _processAppsGotLocalApps(localApps) {
++        self._processApps(remoteApps, localApps, callback);
++      }
++    );
++  },
++
++  /**
++   * Take a list of remote and local apps and figured out what changes (if any)
++   * are to be made to the local DOMApplicationRegistry.
++   */
++  _processApps: function _processApps(remoteApps, lApps, callback) {
++    let toDelete = {};
++    let localApps = {};
++    
++    // Convert lApps to a dictionary of origin -> app (instead of id -> app).
++    for (let [id, app] in Iterator(localApps)) {
++      app.id = id;
++      toDelete[app.origin] = app;
++      localApps[app.origin] = app;
++    }
++
++
++    // Iterate over remote apps, and find out what changes we must apply.
++    let toInstall = [];
++    for each (let app in remoteApps) {
++      // Don't delete apps that are both local & remote.
++      let origin = app.origin;
++      delete toDelete[origin];
++
++      // If there is a remote app that isn't local or 
++      // if the remote app was installed later.
++      if ((!(origin in localApps)) ||
++           localApps[origin].installTime < app.installTime) {
++        
++        let id = localApps[origin].id || DOMApplicationRegistry.makeAppId();
++
++        // We should install this app locally
++        try {          
++          let record = {id: id, value: this._makeLocalApp(app)};
++          toInstall.push(record);
++        } catch (e) {
++          // App was an invalid record
++          this._log.error("A remote app was found to be invalid " + e);
++        }
++      }
++    }
++
++    // Uninstalls only need the ID & deleted flag.
++    let toUninstall = [];
++    for (let origin in toDelete) {
++      toUninstall.push({id: toDelete[origin].id, deleted: true});
++    }
++
++    // Apply installs & uninstalls.
++    this._applyUpdates(toInstall, toUninstall, callback);
++    return;
++  },
++
++  /**
++   * Applies a list of commands as determined by processApps locally.
++   */
++  _applyUpdates: function _applyUpdates(toInstall, toUninstall, callback) {
++    let finalCommands = [];
++    let toUpdate = toInstall.length;
++
++    let self = this;
++    function onManifestsUpdated() {
++      finalCommands.push(toUninstall);
++      if (finalCommands.length) {
++        self._log.info(
++          "processUpdates finished fetching manifests, calling updateApps"
++        );
++        DOMApplicationRegistry.updateApps(finalCommands, callback);
++      } else {
++        self._log.info(
++          "processUpdates finished fetching, no finalCommands were found"
++        );
++        callback();
++      }
++    }
++
++    // Update manifests for all the new remote apps we have.
++    let done = 0;
++    for (let j = 0; j < toUpdate; j++) {
++      let app = toInstall[j];
++      let url = app.value.manifestURL;
++      if (url[0] == "/") {
++        url = app.value.origin + app.value.manifestURL;
++      }
++
++      this._log.info("Updating manifest " + url + "\n");
++      this._getManifest(url, function(err, manifest) {
++        if (!err) {
++          app.value.manifest = manifest;
++          finalCommands.push({id: app.id, value: app.value});
++          self._log.info(app.id + " was added to finalCommands");
++        } else {
++          self._log.debug("Couldn't fetch manifest at " + url + ": " + err);
++        }
++
++        // Not a big deal if we couldn't get a manifest, we will try to fetch
++        // it again in the next cycle. Carry on.
++        done += 1;
++        if (done == toUpdate) {
++          onManifestsUpdated();
++        }
++      });
++    }
++  },
++
++  /**
++   * Fetch a manifest from given URL. No retries are made on failure.
++   */
++  _getManifest: function _getManifest(url, callback)  {
++    let req = new RESTRequest(url);
++    req.get(function(error) {
++      if (error) {
++        callback(error, null);
++        return;
++      }
++      if (!req.response.success) {
++        callback(new Error("Non-200 while fetching manifest"), null);
++        return;
++      }
++
++      let err = null;
++      let manifest = null;
++      try {
++        manifest = JSON.parse(req.response.body);
++        if (!manifest.name) {
++          self._log.warn(
++            "_getManifest got invalid manifest: " + req.response.body
++          );
++          err = new Error("Invalid manifest fetched");
++          manifest = null;
++        }
++      } catch (e) {
++        self._log.warn(
++          "_getManifest got invalid JSON response: " + req.response.body
++        );
++        err = new Error("Invalid manifest fetched");
++        manifest = null;
++      }
++
++      callback(err, manifest);
++    });
++  },
++
++};
++
++XPCOMUtils.defineLazyGetter(this, "AitcStorage", function() {
++  return new AitcStorage();
 +});
+\ No newline at end of file
 diff --git a/services/aitc/service.js b/services/aitc/service.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/service.js
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,47 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -941,6 +1254,8 @@ new file mode 100644
 +Cu.import("resource://gre/modules/Services.jsm");
 +Cu.import("resource://gre/modules/FileUtils.jsm");
 +Cu.import("resource://services-common/log4moz.js");
++Cu.import("resource://services-common/preferences.js");
++Cu.import("resource://services-common/utils.js");
 +
 +function AitcService() {
 +  this.wrappedJSObject = this;
@@ -959,14 +1274,15 @@ new file mode 100644
 +        os.addObserver(this, "final-ui-startup", true);
 +        break;
 +      case "final-ui-startup":
-+        // Start AITC service after 2000ms
-+        this.timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
-+        this.timer.initWithCallback({
-+          notify: function() {
-+            Cu.import("resource://services-aitc/main.js");
-+            Aitc.init();
-+          }
-+        }, 2000, Ci.nsITimer.TYPE_ONE_SHOT);
++        // Start AITC service after 2000ms, only if classic sync is off.
++        if (Preferences.get("services.sync.engine.apps", false)) {
++          return;
++        }
++
++        CommonUtils.namedTimer(function() {
++          Cu.import("resource://services-aitc/main.js");
++          Aitc.init();
++        }, 2000, this, "timer");
 +        break;
 +    }
 +  }
@@ -979,7 +1295,7 @@ diff --git a/services/aitc/services-aitc.js b/services/aitc/services-aitc.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/services-aitc.js
-@@ -0,0 +1,13 @@
+@@ -0,0 +1,15 @@
 +pref("dom.mozApps.whitelist", "https://myapps.mozillalabs.com");
 +
 +pref("services.aitc.dashboard.url", "https://myapps.mozillalabs.com");
@@ -988,12 +1304,13 @@ new file mode 100644
 +//pref("services.aitc.tokenServer.url", "http://token2.reg.mtv1.dev.svc.mozilla.com");
 +pref("services.aitc.tokenServer.url", "https://stage-token.services.mozilla.com");
 +
-+pref("services.aitc.client.putInterval", 10000);
-+pref("services.aitc.client.getInterval", 10000);
++pref("services.aitc.manager.putFreq", 5000);
++pref("services.aitc.manager.getFreq", 30000);
 +
 +pref("services.aitc.client.log.level", "Debug");
++pref("services.aitc.manager.log.level", "Debug");
 +pref("services.aitc.service.log.level", "Debug");
-\ No newline at end of file
++pref("services.aitc.storage.log.level", "Debug");
 diff --git a/services/aitc/tests/Makefile.in b/services/aitc/tests/Makefile.in
 new file mode 100644
 --- /dev/null
@@ -1045,7 +1362,7 @@ new file mode 100644
 diff --git a/testing/xpcshell/xpcshell.ini b/testing/xpcshell/xpcshell.ini
 --- a/testing/xpcshell/xpcshell.ini
 +++ b/testing/xpcshell/xpcshell.ini
-@@ -62,16 +62,17 @@ skip-if = os == "android"
+@@ -63,16 +63,17 @@ skip-if = os == "android"
  [include:extensions/cookie/test/unit/xpcshell.ini]
  [include:storage/test/unit/xpcshell.ini]
  [include:rdf/tests/unit/xpcshell.ini]

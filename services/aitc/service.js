@@ -9,6 +9,8 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/FileUtils.jsm");
 Cu.import("resource://services-common/log4moz.js");
+Cu.import("resource://services-common/preferences.js");
+Cu.import("resource://services-common/utils.js");
 
 function AitcService() {
   this.wrappedJSObject = this;
@@ -27,14 +29,15 @@ AitcService.prototype = {
         os.addObserver(this, "final-ui-startup", true);
         break;
       case "final-ui-startup":
-        // Start AITC service after 2000ms
-        this.timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
-        this.timer.initWithCallback({
-          notify: function() {
-            Cu.import("resource://services-aitc/main.js");
-            Aitc.init();
-          }
-        }, 2000, Ci.nsITimer.TYPE_ONE_SHOT);
+        // Start AITC service after 2000ms, only if classic sync is off.
+        if (Preferences.get("services.sync.engine.apps", false)) {
+          return;
+        }
+
+        CommonUtils.namedTimer(function() {
+          Cu.import("resource://services-aitc/main.js");
+          Aitc.init();
+        }, 2000, this, "timer");
         break;
     }
   }

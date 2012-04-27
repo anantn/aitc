@@ -33,16 +33,16 @@ AitcSvc.prototype = {
   },
 
   // The goal of the init function is to be ready to activate the AITC
-  // client whenever the user is looking at the dashboard
+  // client whenever the user is looking at the dashboard.
   init: function init() {
     let self = this;
 
-    // This is called iff the user is currently looking the dashboard
+    // This is called iff the user is currently looking the dashboard.
     function dashboardLoaded(browser) {
       self._log.info("Dashboard was accessed");
       self._manager.userOnDashboard(browser.contentWindow);
     }
-    // This is called when the user's attention is elsewhere
+    // This is called when the user's attention is elsewhere.
     function dashboardUnloaded() {
       self._log.info("Dashboard closed or in background");
       self._manager.userOffDashboard();
@@ -51,7 +51,7 @@ AitcSvc.prototype = {
     // Called when a URI is loaded in any tab. We have to listen for this
     // because tabSelected is not called if I open a new tab which loads
     // about:home and then navigate to the dashboard, or navigation via
-    // links on the currently open tab
+    // links on the currently open tab.
     let listener = {
       onLocationChange: function onLocationChange(browser, progress, req, location, flags) {
         let win = Services.wm.getMostRecentWindow("navigator:browser");
@@ -63,7 +63,7 @@ AitcSvc.prototype = {
         }
       }
     };
-    // Called when the current tab selection changes
+    // Called when the current tab selection changes.
     function tabSelected(event) {
       let browser = event.target.linkedBrowser;
       let uri = browser.currentURI.spec.substring(0, self.DASHBOARD.length);
@@ -74,7 +74,7 @@ AitcSvc.prototype = {
       }
     }
 
-    // Add listeners for all windows opened in the future
+    // Add listeners for all windows opened in the future.
     function winWatcher(subject, topic) {
       if (topic != "domwindowopened") return;
       subject.addEventListener("load", function winWatcherLoad() {
@@ -89,14 +89,14 @@ AitcSvc.prototype = {
     }
     Services.ww.registerNotification(winWatcher);
 
-    // Add listeners for all current open windows
+    // Add listeners for all current open windows.
     let enumerator = Services.wm.getEnumerator("navigator:browser");
     while (enumerator.hasMoreElements()) {
       let browser = enumerator.getNext().gBrowser;
       browser.addTabsProgressListener(listener);
       browser.tabContainer.addEventListener("TabSelect", tabSelected);
 
-      // Also check the currently open URI
+      // Also check the currently open URI.
       let uri = browser.contentDocument.location.toString().substring(
         0, self.DASHBOARD.length
       );
@@ -105,7 +105,7 @@ AitcSvc.prototype = {
       }
     }
 
-    // Add listeners for app installs/uninstall
+    // Add listeners for app installs/uninstall.
     Services.obs.addObserver(this, "webapps-sync-install", false);
     Services.obs.addObserver(this, "webapps-sync-uninstall", false);
   },

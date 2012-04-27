@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent e99c1619dbfdd0ad283328f781b2a4d99a5c6da1
+# Parent c019b4bbe9ffc30ba0a1ee72a475fc0bce48d47d
 
 diff --git a/allmakefiles.sh b/allmakefiles.sh
 --- a/allmakefiles.sh
@@ -45,10 +45,10 @@ diff --git a/browser/build.mk b/browser/build.mk
 diff --git a/browser/confvars.sh b/browser/confvars.sh
 --- a/browser/confvars.sh
 +++ b/browser/confvars.sh
-@@ -46,16 +46,17 @@ if test "$OS_ARCH" = "WINNT"; then
-     MOZ_VERIFY_MAR_SIGNATURE=1
-     MOZ_MAINTENANCE_SERVICE=1
-   fi
+@@ -50,16 +50,17 @@ fi
+ 
+ if (test "$OS_TARGET" = "WINNT" -o "$OS_TARGET" = "Darwin"); then
+   MOZ_WEBAPP_RUNTIME=1
  fi
  
  MOZ_CHROME_FILE_FORMAT=omni
@@ -66,7 +66,7 @@ diff --git a/browser/confvars.sh b/browser/confvars.sh
 diff --git a/config/autoconf.mk.in b/config/autoconf.mk.in
 --- a/config/autoconf.mk.in
 +++ b/config/autoconf.mk.in
-@@ -679,16 +679,18 @@ WRAP_SYSTEM_INCLUDES = @WRAP_SYSTEM_INCL
+@@ -681,16 +681,18 @@ WRAP_SYSTEM_INCLUDES = @WRAP_SYSTEM_INCL
  HAVE_ARM_SIMD = @HAVE_ARM_SIMD@
  HAVE_ARM_NEON = @HAVE_ARM_NEON@
  HAVE_GCC_ALIGN_ARG_POINTER = @HAVE_GCC_ALIGN_ARG_POINTER@
@@ -88,7 +88,7 @@ diff --git a/config/autoconf.mk.in b/config/autoconf.mk.in
 diff --git a/configure.in b/configure.in
 --- a/configure.in
 +++ b/configure.in
-@@ -8341,16 +8341,22 @@ if test "$MOZ_PLACES"; then
+@@ -8363,16 +8363,22 @@ if test "$MOZ_PLACES"; then
  fi
  
  dnl Build Sync Services if required
