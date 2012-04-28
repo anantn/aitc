@@ -1,156 +1,36 @@
 # HG changeset patch
 # Parent c019b4bbe9ffc30ba0a1ee72a475fc0bce48d47d
 
-diff --git a/allmakefiles.sh b/allmakefiles.sh
---- a/allmakefiles.sh
-+++ b/allmakefiles.sh
-@@ -158,10 +158,13 @@ done
- # Toolkit makefiles
- if [ ! "$LIBXUL_SDK" ]; then
-   . "${srcdir}/toolkit/toolkit-makefiles.sh"
- fi
+diff --git a/services/Makefile.in b/services/Makefile.in
+--- a/services/Makefile.in
++++ b/services/Makefile.in
+@@ -38,12 +38,12 @@
+ DEPTH     = ..
+ topsrcdir = @top_srcdir@
+ srcdir    = @srcdir@
+ VPATH     = @srcdir@
  
- # Services makefiles
- . "${srcdir}/services/makefiles.sh"
- 
-+# Identity makefiles
-+. "${srcdir}/identity/makefiles.sh"
-+
- # Turn off exit on error, since it breaks the rest of configure
- set +o errexit
-diff --git a/browser/build.mk b/browser/build.mk
---- a/browser/build.mk
-+++ b/browser/build.mk
-@@ -46,16 +46,20 @@ tier_app_dirs += extensions
- endif
- 
- tier_app_dirs += $(MOZ_BRANDING_DIRECTORY)
+ include $(DEPTH)/config/autoconf.mk
  
  ifdef MOZ_SERVICES_SYNC
- tier_app_dirs += services
+-PARALLEL_DIRS += common crypto sync
++PARALLEL_DIRS += common crypto identity sync
  endif
  
-+ifdef MOZ_SERVICES_IDENTITY
-+tier_app_dirs += identity
-+endif
-+
- ifdef MOZ_WEBAPP_RUNTIME
- tier_app_dirs += webapprt
- endif
- 
- tier_app_dirs += browser
- # Never add other tier_app_dirs after browser. They won't get packaged
- # properly on mac.
- 
-diff --git a/browser/confvars.sh b/browser/confvars.sh
---- a/browser/confvars.sh
-+++ b/browser/confvars.sh
-@@ -50,16 +50,17 @@ fi
- 
- if (test "$OS_TARGET" = "WINNT" -o "$OS_TARGET" = "Darwin"); then
-   MOZ_WEBAPP_RUNTIME=1
- fi
- 
- MOZ_CHROME_FILE_FORMAT=omni
- MOZ_SAFE_BROWSING=1
- MOZ_SERVICES_SYNC=1
-+MOZ_IDENTITY=1
- MOZ_APP_VERSION=$FIREFOX_VERSION
- MOZ_EXTENSIONS_DEFAULT=" gnomevfs"
- # MOZ_APP_DISPLAYNAME will be set by branding/configure.sh
- # Changing MOZ_*BRANDING_DIRECTORY requires a clobber to ensure correct results,
- # because branding dependencies are broken.
- # MOZ_BRANDING_DIRECTORY is the default branding directory used when none is
- # specified. It should never point to the "official" branding directory.
- # For mozilla-beta, mozilla-release, or mozilla-central repositories, use
-diff --git a/config/autoconf.mk.in b/config/autoconf.mk.in
---- a/config/autoconf.mk.in
-+++ b/config/autoconf.mk.in
-@@ -681,16 +681,18 @@ WRAP_SYSTEM_INCLUDES = @WRAP_SYSTEM_INCL
- HAVE_ARM_SIMD = @HAVE_ARM_SIMD@
- HAVE_ARM_NEON = @HAVE_ARM_NEON@
- HAVE_GCC_ALIGN_ARG_POINTER = @HAVE_GCC_ALIGN_ARG_POINTER@
- 
- MOZ_THEME_FASTSTRIPE = @MOZ_THEME_FASTSTRIPE@
- 
- MOZ_SERVICES_SYNC = @MOZ_SERVICES_SYNC@
- 
-+MOZ_IDENTITY = @MOZ_IDENTITY@
-+
- MOZ_WEBAPP_RUNTIME = @MOZ_WEBAPP_RUNTIME@
- 
- MOZ_OFFICIAL_BRANDING = @MOZ_OFFICIAL_BRANDING@
- 
- HAVE_CLOCK_MONOTONIC = @HAVE_CLOCK_MONOTONIC@
- REALTIME_LIBS = @REALTIME_LIBS@
- 
- MOZ_APP_COMPONENT_LIBS = @MOZ_APP_COMPONENT_LIBS@
-diff --git a/configure.in b/configure.in
---- a/configure.in
-+++ b/configure.in
-@@ -8363,16 +8363,22 @@ if test "$MOZ_PLACES"; then
- fi
- 
- dnl Build Sync Services if required
- AC_SUBST(MOZ_SERVICES_SYNC)
- if test -n "$MOZ_SERVICES_SYNC"; then
-   AC_DEFINE(MOZ_SERVICES_SYNC)
- fi
- 
-+dnl Build Identity Services if required
-+AC_SUBST(MOZ_IDENTITY)
-+if test -n "$MOZ_IDENTITY"; then
-+  AC_DEFINE(MOZ_IDENTITY)
-+fi
-+
- dnl ========================================================
- if test "$MOZ_DEBUG" -o "$NS_TRACE_MALLOC"; then
-     MOZ_COMPONENTS_VERSION_SCRIPT_LDFLAGS=
- fi
- 
- if test "$MOZ_APP_COMPONENT_INCLUDE"; then
-   AC_DEFINE_UNQUOTED(MOZ_APP_COMPONENT_INCLUDE, "$MOZ_APP_COMPONENT_INCLUDE")
- fi
-diff --git a/identity/Makefile.in b/identity/Makefile.in
+ include $(topsrcdir)/config/rules.mk
+diff --git a/services/identity/IDComponents.manifest b/services/identity/IDComponents.manifest
 new file mode 100644
 --- /dev/null
-+++ b/identity/Makefile.in
-@@ -0,0 +1,16 @@
-+# This Source Code Form is subject to the terms of the Mozilla Public
-+# License, v. 2.0. If a copy of the MPL was not distributed with this file,
-+# You can obtain one at http://mozilla.org/MPL/2.0/.
-+
-+DEPTH     = ..
-+topsrcdir = @top_srcdir@
-+srcdir    = @srcdir@
-+VPATH     = @srcdir@
-+
-+include $(DEPTH)/config/autoconf.mk
-+
-+ifdef MOZ_IDENTITY
-+DIRS += modules
-+endif
-+
-+include $(topsrcdir)/config/rules.mk
-diff --git a/identity/makefiles.sh b/identity/makefiles.sh
++++ b/services/identity/IDComponents.manifest
+@@ -0,0 +1,2 @@
++# Register resource aliases
++resource services-identity resource:///modules/services-identity/
+\ No newline at end of file
+diff --git a/services/identity/Makefile.in b/services/identity/Makefile.in
 new file mode 100644
 --- /dev/null
-+++ b/identity/makefiles.sh
-@@ -0,0 +1,9 @@
-+# This Source Code Form is subject to the terms of the Mozilla Public
-+# License, v. 2.0. If a copy of the MPL was not distributed with this file,
-+# You can obtain one at http://mozilla.org/MPL/2.0/.
-+
-+add_makefiles "identity/Makefile"
-+
-+if [ "$ENABLE_TESTS" ]; then
-+  add_makefiles "identity/modules/tests/Makefile"
-+fi
-diff --git a/identity/modules/Makefile.in b/identity/modules/Makefile.in
-new file mode 100644
---- /dev/null
-+++ b/identity/modules/Makefile.in
-@@ -0,0 +1,27 @@
++++ b/services/identity/Makefile.in
+@@ -0,0 +1,31 @@
 +# This Source Code Form is subject to the terms of the Mozilla Public
 +# License, v. 2.0. If a copy of the MPL was not distributed with this file,
 +# You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -162,6 +42,10 @@ new file mode 100644
 +
 +include $(DEPTH)/config/autoconf.mk
 +
++EXTRA_COMPONENTS = \
++  IDComponents.manifest \
++  $(NULL)
++
 +PREF_JS_EXPORTS = $(srcdir)/identity-common.js
 +
 +modules := \
@@ -169,7 +53,7 @@ new file mode 100644
 +  $(NULL)
 +
 +source_modules = $(foreach module,$(modules),$(srcdir)/$(module))
-+module_dir = $(FINAL_TARGET)/modules/identity
++module_dir = $(FINAL_TARGET)/modules/services-identity
 +
 +libs::
 +	$(NSINSTALL) -D $(module_dir)
@@ -178,11 +62,11 @@ new file mode 100644
 +TEST_DIRS += tests
 +
 +include $(topsrcdir)/config/rules.mk
-diff --git a/identity/modules/browserid.js b/identity/modules/browserid.js
+diff --git a/services/identity/browserid.js b/services/identity/browserid.js
 new file mode 100644
 --- /dev/null
-+++ b/identity/modules/browserid.js
-@@ -0,0 +1,396 @@
++++ b/services/identity/browserid.js
+@@ -0,0 +1,398 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -468,12 +352,13 @@ new file mode 100644
 +   * Gets the email which was used to login to 'domain'. If one was found,
 +   * _getAssertionWithEmail is called to obtain the assertion.
 +   */
-+  _getAssertionWithDomain: function _getAssertionWithDomain(obj, cb, domain) {
++  _getAssertionWithDomain: function _getAssertionWithDomain(obj, cb, domain,
++                                                            audience) {
 +    let self = this;
 +
 +    function onDomainSuccess(email) {
 +      if (email) {
-+        self._getAssertionWithEmail(obj, cb, email, domain);
++        self._getAssertionWithEmail(obj, cb, email, audience);
 +      } else {
 +        cb(new Error("No email found for _getAssertionWithDomain"), null);
 +        obj.free();
@@ -481,6 +366,7 @@ new file mode 100644
 +    }
 +    obj.sandbox.importFunction(onDomainSuccess, "onDomainSuccess");
 +
++    // This wil tell us which email was used to login to "domain", if any.
 +    self._log.info("_getAssertionWithDomain Started");
 +    let scriptText = 
 +      "onDomainSuccess(window.BrowserID.Storage.site.get(" +
@@ -580,18 +466,18 @@ new file mode 100644
 +  return new BrowserIDService();
 +});
 \ No newline at end of file
-diff --git a/identity/modules/identity-common.js b/identity/modules/identity-common.js
+diff --git a/services/identity/identity-common.js b/services/identity/identity-common.js
 new file mode 100644
 --- /dev/null
-+++ b/identity/modules/identity-common.js
++++ b/services/identity/identity-common.js
 @@ -0,0 +1,2 @@
 +pref("identity.browserid.log", "Debug");
 +pref("identity.browserid.url", "https://browserid.org/sign_in");
 \ No newline at end of file
-diff --git a/identity/modules/tests/Makefile.in b/identity/modules/tests/Makefile.in
+diff --git a/services/identity/tests/Makefile.in b/services/identity/tests/Makefile.in
 new file mode 100644
 --- /dev/null
-+++ b/identity/modules/tests/Makefile.in
++++ b/services/identity/tests/Makefile.in
 @@ -0,0 +1,16 @@
 +# This Source Code Form is subject to the terms of the Mozilla Public
 +# License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -601,18 +487,18 @@ new file mode 100644
 +topsrcdir      = @top_srcdir@
 +srcdir         = @srcdir@
 +VPATH          = @srcdir@
-+relativesrcdir = identity/modules/tests
++relativesrcdir = services/identity/tests
 +
 +include $(DEPTH)/config/autoconf.mk
 +
-+MODULE = test_identity
++MODULE = test_services_identity
 +XPCSHELL_TESTS = unit
 +
 +include $(topsrcdir)/config/rules.mk
-diff --git a/identity/modules/tests/unit/head_global.js b/identity/modules/tests/unit/head_global.js
+diff --git a/services/identity/tests/unit/head_global.js b/services/identity/tests/unit/head_global.js
 new file mode 100644
 --- /dev/null
-+++ b/identity/modules/tests/unit/head_global.js
++++ b/services/identity/tests/unit/head_global.js
 @@ -0,0 +1,49 @@
 +/* Any copyright is dedicated to the Public Domain.
 + * http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -658,15 +544,15 @@ new file mode 100644
 +  const handler = Services.io.getProtocolHandler("resource")
 +                  .QueryInterface(Ci.nsIResProtocolHandler);
 +
-+  let uri = Services.io.newURI("resource:///modules/identity/", null,
++  let uri = Services.io.newURI("resource:///modules/services-identity/", null,
 +                               null);
-+  handler.setSubstitution("identity", uri);
++  handler.setSubstitution("services-identity", uri);
 +}
 +addResourceAlias();
-diff --git a/identity/modules/tests/unit/test_load_modules.js b/identity/modules/tests/unit/test_load_modules.js
+diff --git a/services/identity/tests/unit/test_load_modules.js b/services/identity/tests/unit/test_load_modules.js
 new file mode 100644
 --- /dev/null
-+++ b/identity/modules/tests/unit/test_load_modules.js
++++ b/services/identity/tests/unit/test_load_modules.js
 @@ -0,0 +1,14 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -678,14 +564,14 @@ new file mode 100644
 +
 +function run_test() {
 +  for each (let m in modules) {
-+    let resource = "resource://identity/" + m;
++    let resource = "resource://services-identity/" + m;
 +    Components.utils.import(resource, {});
 +  }
 +}
-diff --git a/identity/modules/tests/unit/xpcshell.ini b/identity/modules/tests/unit/xpcshell.ini
+diff --git a/services/identity/tests/unit/xpcshell.ini b/services/identity/tests/unit/xpcshell.ini
 new file mode 100644
 --- /dev/null
-+++ b/identity/modules/tests/unit/xpcshell.ini
++++ b/services/identity/tests/unit/xpcshell.ini
 @@ -0,0 +1,6 @@
 +[DEFAULT]
 +head = head_global.js
@@ -693,10 +579,35 @@ new file mode 100644
 +
 +# Test load modules first so syntax failures are caught early.
 +[test_load_modules.js]
+diff --git a/services/makefiles.sh b/services/makefiles.sh
+--- a/services/makefiles.sh
++++ b/services/makefiles.sh
+@@ -35,19 +35,21 @@
+ #
+ # ***** END LICENSE BLOCK *****
+ 
+ add_makefiles "
+   services/Makefile
+   services/common/Makefile
+   services/crypto/Makefile
+   services/crypto/component/Makefile
++  services/identity/Makefile
+   services/sync/Makefile
+   services/sync/locales/Makefile
+ "
+ 
+ if [ "$ENABLE_TESTS" ]; then
+   add_makefiles "
+     services/common/tests/Makefile
+     services/crypto/tests/Makefile
++    services/identity/tests/Makefile
+     services/sync/tests/Makefile
+   "
+ fi
 diff --git a/testing/xpcshell/xpcshell.ini b/testing/xpcshell/xpcshell.ini
 --- a/testing/xpcshell/xpcshell.ini
 +++ b/testing/xpcshell/xpcshell.ini
-@@ -63,16 +63,18 @@ skip-if = os == "android"
+@@ -63,19 +63,21 @@ skip-if = os == "android"
  [include:extensions/cookie/test/unit/xpcshell.ini]
  [include:storage/test/unit/xpcshell.ini]
  [include:rdf/tests/unit/xpcshell.ini]
@@ -705,13 +616,16 @@ diff --git a/testing/xpcshell/xpcshell.ini b/testing/xpcshell/xpcshell.ini
  [include:content/base/test/unit/xpcshell.ini]
  [include:content/test/unit/xpcshell.ini]
  [include:toolkit/components/url-classifier/tests/unit/xpcshell.ini]
-+[include:identity/modules/tests/unit/xpcshell.ini]
 +[include:services/aitc/tests/unit/xpcshell.ini]
  [include:services/common/tests/unit/xpcshell.ini]
  [include:services/crypto/tests/unit/xpcshell.ini]
  [include:services/crypto/components/tests/unit/xpcshell.ini]
++[include:services/identity/tests/unit/xpcshell.ini]
  [include:services/sync/tests/unit/xpcshell.ini]
  # Bug 676978: tests hang on Android 
  skip-if = os == "android"
  [include:browser/components/dirprovider/tests/unit/xpcshell.ini]
  [include:browser/components/downloads/test/unit/xpcshell.ini]
+ [include:browser/components/feeds/test/unit/xpcshell.ini]
+ [include:browser/components/migration/tests/unit/xpcshell.ini]
+ [include:browser/components/places/tests/unit/xpcshell.ini]
