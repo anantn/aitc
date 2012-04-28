@@ -1,0 +1,174 @@
+# HG changeset patch
+# Parent d6b5a7d59a5893e84626d84ba229caf4dd33b8d2
+
+diff --git a/identity/modules/tests/Makefile.in b/identity/modules/tests/Makefile.in
+--- a/identity/modules/tests/Makefile.in
++++ b/identity/modules/tests/Makefile.in
+@@ -9,8 +9,17 @@ VPATH          = @srcdir@
+ relativesrcdir = identity/modules/tests
+ 
+ include $(DEPTH)/config/autoconf.mk
+ 
+ MODULE = test_identity
+ XPCSHELL_TESTS = unit
+ 
+ include $(topsrcdir)/config/rules.mk
++
++_BROWSER_FILES = \
++  head.js \
++  browser_identity_loggedout.js \
++  browser_identity_default.js \
++  $(NULL)
++
++libs::  $(_BROWSER_FILES)
++  $(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/browser/$(relativesrcdir)
+diff --git a/identity/modules/tests/browser_identity_default.js b/identity/modules/tests/browser_identity_default.js
+new file mode 100644
+--- /dev/null
++++ b/identity/modules/tests/browser_identity_default.js
+@@ -0,0 +1,44 @@
++/* Any copyright is dedicated to the Public Domain.
++   http://creativecommons.org/publicdomain/zero/1.0/ */
++
++/**
++ * This test logs into browser ID as the moztest user and then obtains
++ * an assertion for the "default" address, i.e. moztest@mailinator.com
++ */
++function test() {
++  ok(BrowserID, "BrowserID exists");
++  loadURL("http://browserid.org/signin", loaded);
++  waitForExplicitFinish();
++}
++
++function loaded() {
++  // Enter email
++  let doc = gBrowser.contentDocument;
++  doc.getElementById("email").value = testEmail;
++  let submit = doc.getElementsByClassName("submit")[0];
++  let button = submit.getElementByTagName("button")[0];
++  button.click();
++  setTimeout(password, 1000);
++}
++
++function password() {
++  // Enter password and login
++  let doc = gBrowser.contentDocument;
++  doc.getElementById("password").value = testPassword;
++  let submit = doc.getElementsByClassName("submit")[0];
++  let button = submit.getElementByTagName("button")[0];
++  button.click();
++  setTimeout(getassert, 3000);
++}
++
++function getassert() {
++  // Now that we're logged in, get an assertion
++  BrowserID.getAssertion(function(err, val) {
++    // Check if we got a valid assertion
++    let assert = JSON.parse(atob(val.split(".")[1]));
++    is(assert.iss, "browserid.org", "Issuer matches");
++    is(asssert.principal.email, testEmail, "Email matches");
++    // TODO: Test audience
++    finish();
++  },{audience:testDomain0});
++}
+\ No newline at end of file
+diff --git a/identity/modules/tests/browser_identity_emailas.js b/identity/modules/tests/browser_identity_emailas.js
+new file mode 100644
+--- /dev/null
++++ b/identity/modules/tests/browser_identity_emailas.js
+@@ -0,0 +1,44 @@
++/* Any copyright is dedicated to the Public Domain.
++   http://creativecommons.org/publicdomain/zero/1.0/ */
++
++/**
++ * This test logs into browser ID as the moztest user and then obtains
++ * an assertion for the "default" address, i.e. moztest@mailinator.com
++ */
++function test() {
++  ok(BrowserID, "BrowserID exists");
++  loadURL("http://browserid.org/signin", loaded);
++  waitForExplicitFinish();
++}
++
++function loaded() {
++  // Enter email
++  let doc = gBrowser.contentDocument;
++  doc.getElementById("email").value = testEmail;
++  let submit = doc.getElementsByClassName("submit")[0];
++  let button = submit.getElementByTagName("button")[0];
++  button.click();
++  setTimeout(password, 1000);
++}
++
++function password() {
++  // Enter password and login
++  let doc = gBrowser.contentDocument;
++  doc.getElementById("password").value = testPassword;
++  let submit = doc.getElementsByClassName("submit")[0];
++  let button = submit.getElementByTagName("button")[0];
++  button.click();
++  setTimeout(getassert, 3000);
++}
++
++function getassert() {
++  // Now that we're logged in, get an assertion
++  BrowserID.getAssertion(function(err, val) {
++    // Check if we got a valid assertion
++    let assert = JSON.parse(atob(val.split(".")[1]));
++    is(assert.iss, "browserid.org", "Issuer matches");
++    is(asssert.principal.email, testEmail, "Email matches");
++    // TODO: Test audience
++    finish();
++  },{audience:testDomain0});
++}
+\ No newline at end of file
+diff --git a/identity/modules/tests/browser_identity_loggedout.js b/identity/modules/tests/browser_identity_loggedout.js
+new file mode 100644
+--- /dev/null
++++ b/identity/modules/tests/browser_identity_loggedout.js
+@@ -0,0 +1,19 @@
++/* Any copyright is dedicated to the Public Domain.
++   http://creativecommons.org/publicdomain/zero/1.0/ */
++
++/**
++ * This test is the first in the series of the BrowserID module tests.
++ * We begin by verifying that the user is logged out.
++ */
++function test() {
++  ok(BrowserID, "BrowserID exists");
++  BrowserID.getAssertion(function(err, val) {
++    is(
++      err.toString(),
++      "Error: User is not logged in, or no emails were found",
++      "User is not logged in"
++    );
++    finish();
++  },{audience:testDomain0});
++  waitForExplicitFinish();
++}
+diff --git a/identity/modules/tests/head.js b/identity/modules/tests/head.js
+new file mode 100644
+--- /dev/null
++++ b/identity/modules/tests/head.js
+@@ -0,0 +1,21 @@
++/* Any copyright is dedicated to the Public Domain.
++   http://creativecommons.org/publicdomain/zero/1.0/ */
++
++Components.utils.import("resource://gre/modules/Services.jsm");
++Components.utils.import("resource://gre/modules/identity/browserid.js");
++
++const testDomain0 = "http://google.com";
++const testDomain1 = "http://myapps.mozillalabs.com";
++const testDomain2 = "https://marketplace.mozilla.org";
++
++const testEmail = "moztest@mailinator.com";
++const testPassword = "moztestpassword";
++
++function loadURL(aURL, aCB) {
++  gBrowser.selectedBrowser.addEventListener("load", function () {
++    gBrowser.selectedBrowser.removeEventListener("load", arguments.callee, true);
++    is(gBrowser.currentURI.spec, aURL, "loaded expected URL");
++    aCB();
++  }, true);
++  gBrowser.loadURI(aURL);
++}
