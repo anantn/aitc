@@ -8,7 +8,7 @@ const modules = [
 
 function run_test() {
   for each (let m in modules) {
-    let resource = "resource://identity/" + m;
+    let resource = "resource://services-identity/" + m;
     Components.utils.import(resource, {});
   }
 }

@@ -42,8 +42,8 @@ function addResourceAlias() {
   const handler = Services.io.getProtocolHandler("resource")
                   .QueryInterface(Ci.nsIResProtocolHandler);
 
-  let uri = Services.io.newURI("resource:///modules/identity/", null,
+  let uri = Services.io.newURI("resource:///modules/services-identity/", null,
                                null);
-  handler.setSubstitution("identity", uri);
+  handler.setSubstitution("services-identity", uri);
 }
 addResourceAlias();

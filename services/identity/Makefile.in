@@ -9,6 +9,10 @@ VPATH     = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
+EXTRA_COMPONENTS = \
+  IDComponents.manifest \
+  $(NULL)
+
 PREF_JS_EXPORTS = $(srcdir)/identity-common.js
 
 modules := \
@@ -16,7 +20,7 @@ modules := \
   $(NULL)
 
 source_modules = $(foreach module,$(modules),$(srcdir)/$(module))
-module_dir = $(FINAL_TARGET)/modules/identity
+module_dir = $(FINAL_TARGET)/modules/services-identity
 
 libs::
 	$(NSINSTALL) -D $(module_dir)

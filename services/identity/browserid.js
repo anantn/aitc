@@ -283,12 +283,13 @@ BrowserIDService.prototype = {
    * Gets the email which was used to login to 'domain'. If one was found,
    * _getAssertionWithEmail is called to obtain the assertion.
    */
-  _getAssertionWithDomain: function _getAssertionWithDomain(obj, cb, domain) {
+  _getAssertionWithDomain: function _getAssertionWithDomain(obj, cb, domain,
+                                                            audience) {
     let self = this;
 
     function onDomainSuccess(email) {
       if (email) {
-        self._getAssertionWithEmail(obj, cb, email, domain);
+        self._getAssertionWithEmail(obj, cb, email, audience);
       } else {
         cb(new Error("No email found for _getAssertionWithDomain"), null);
         obj.free();
@@ -296,6 +297,7 @@ BrowserIDService.prototype = {
     }
     obj.sandbox.importFunction(onDomainSuccess, "onDomainSuccess");
 
+    // This wil tell us which email was used to login to "domain", if any.
     self._log.info("_getAssertionWithDomain Started");
     let scriptText = 
       "onDomainSuccess(window.BrowserID.Storage.site.get(" +

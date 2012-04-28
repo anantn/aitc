@@ -6,20 +6,23 @@ DEPTH          = ../../..
 topsrcdir      = @top_srcdir@
 srcdir         = @srcdir@
 VPATH          = @srcdir@
-relativesrcdir = identity/modules/tests
+relativesrcdir = services/identity/tests
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE = test_identity
+MODULE = test_services_identity
 XPCSHELL_TESTS = unit
 
 include $(topsrcdir)/config/rules.mk
 
+# Number the test files because order is very important!
 _BROWSER_FILES = \
   head.js \
-  browser_identity_loggedout.js \
-  browser_identity_default.js \
+  browser_identity_1_fresh.js \
+  browser_identity_2_login.js \
+  browser_identity_3_default.js \
+  browser_identity_4_emailas.js \
   $(NULL)
 
 libs::  $(_BROWSER_FILES)
-  $(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/browser/$(relativesrcdir)
+	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/browser/$(relativesrcdir)
