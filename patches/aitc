@@ -83,10 +83,10 @@ new file mode 100644
 +  this.uri = token.endpoint.replace(/\/+$/, "");
 +  this.token = {id: token.id, key: token.key};
 +
-+  this._log = Log4Moz.repository.getLogger("Services.AITC.Client");
-+  this._log.level = Log4Moz.Level[PREFS.get("log.level")];
++  this._log = Log4Moz.repository.getLogger("Service.AITC.Client");
++  //this._log.level = Log4Moz.Level[PREFS.get("log.level")];
 +  let dapp = new Log4Moz.DumpAppender();
-+  dapp.level = Log4Moz.Level["Info"];
++  dapp.level = Log4Moz.Level["All"];
 +  this._log.addAppender(dapp);
 +  
 +  this._backoff = false;
@@ -379,11 +379,11 @@ new file mode 100644
 +
 +function AitcImpl() {
 +  this._log = Log4Moz.repository.getLogger("Service.AITC");
-+  this._log.level = Log4Moz.Level[Preferences.get(
-+    "services.aitc.log.logger.service"
-+  )];
++  /*this._log.level = Log4Moz.Level[Preferences.get(
++    "services.aitc.service.log.level"
++  )];*/
 +  let dapp = new Log4Moz.DumpAppender();
-+  dapp.level = Log4Moz.Level["Info"];
++  dapp.level = Log4Moz.Level["All"];
 +  this._log.addAppender(dapp);
 +  this._log.info("Loading AitC");
 +  this._manager = new AitcManager();
@@ -400,7 +400,7 @@ new file mode 100644
 +
 +    // This is called iff the user is currently looking the dashboard.
 +    function dashboardLoaded(browser) {
-+      self._log.info("Dashboard was accessed");
++      self._log.info("Dashboard was accessed " + browser.contentWindow);
 +      self._manager.userOnDashboard(browser.contentWindow);
 +    }
 +    // This is called when the user's attention is elsewhere.
@@ -495,7 +495,7 @@ diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/manager.js
-@@ -0,0 +1,377 @@
+@@ -0,0 +1,385 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -526,14 +526,16 @@ new file mode 100644
 +  this._pending = new AitcQueue("webapps-pending.json");
 +
 +  this._log = Log4Moz.repository.getLogger("Service.AITC.Manager");
-+  this._log.level = Log4Moz.Level[Preferences.get("manager.log.level")];
-+  let dapp = new Log4Moz.DumpAppender();
-+  dapp.level = Log4Moz.Level["Info"];
-+  this._log.addAppender(dapp);
++  //this._log.level = Log4Moz.Level[Preferences.get("manager.log.level")];
++  this._log.info("Loading AitC manager module");
 +}
 +AitcManager.prototype = {
 +  get MARKETPLACE() {
 +    return PREFS.get("marketplace.url");
++  },
++
++  get DASHBOARD() {
++    return PREFS.get("dashboard.url");
 +  },
 +
 +  get TOKEN_SERVER() {
@@ -582,6 +584,8 @@ new file mode 100644
 +      return;
 +    }
 +
++    // Make client will first try silent login, if it doesn't work, a popup
++    // will be shown in the context of the dashboard.
 +    let self = this;
 +    this._makeClient(function(err, client) {
 +      if (err) {
@@ -834,6 +838,7 @@ new file mode 100644
 +    }
 +
 +    let self = this;
++    let ctxWin = win;
 +    function processAssertion(val) {
 +      self._log.info("Got assertion from BrowserID, creating token");
 +      self._getToken(val, function(err, token) {
@@ -858,7 +863,7 @@ new file mode 100644
 +              return;
 +            }
 +            processAssertion(val);
-+          }, {}, win);
++          }, {}, ctxWin);
 +          return;
 +        }
 +        self._log.error("Could not obtain assertion in _makeClient");
@@ -869,7 +874,10 @@ new file mode 100644
 +    }
 +
 +    // Check if we can get assertion silently first
-+    BrowserID.getAssertion(gotSilentAssertion, {sameEmailAs: this.MARKETPLACE});
++    self._log.info("Attempting to obtain assertion silently")
++    BrowserID.getAssertion(gotSilentAssertion, {
++      audience: this.DASHBOARD, sameEmailAs: this.MARKETPLACE
++    });
 +  },
 +
 +};
@@ -877,7 +885,7 @@ diff --git a/services/aitc/modules/storage.js b/services/aitc/modules/storage.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/storage.js
-@@ -0,0 +1,365 @@
+@@ -0,0 +1,371 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -902,12 +910,12 @@ new file mode 100644
 + * storage to manage pending installs and uninstalls.
 + */
 +function AitcQueue(filename) {
-+  this._log = Log4Moz.repository.getLogger("Service.AITC.Storage");
-+  this._log.level = Log4Moz.Level[Preferences.get(
++  this._log = Log4Moz.repository.getLogger("Service.AITC.Storage.Queue");
++  /*this._log.level = Log4Moz.Level[Preferences.get(
 +    "services.aitc.storage.log.level"
-+  )];
++  )];*/
 +  let dapp = new Log4Moz.DumpAppender();
-+  dapp.level = Log4Moz.Level["Info"];
++  dapp.level = Log4Moz.Level["All"];
 +  this._log.addAppender(dapp);
 +
 +  this._queue = [];
@@ -1004,10 +1012,15 @@ new file mode 100644
 +
 +      let data = null;
 +      try {
-+        data = JSON.parse(
-+          NetUtil.readInputStreamToString(stream, stream.available()) || "[]"
-+        );
++        if (stream && stream.available()) {
++          data = JSON.parse(
++            NetUtil.readInputStreamToString(stream, stream.available())
++          );
++        } else {
++          data = [];
++        }
 +        stream.close();
++
 +        if (cb) {
 +          cb(data);
 +        }
@@ -1061,12 +1074,13 @@ new file mode 100644
 + */
 +function AitcStorageImpl() {
 +  this._log = Log4Moz.repository.getLogger("Service.AITC.Storage");
-+  this._log.level = Log4Moz.Level[Preferences.get(
-+    "services.aitc.log.logger.storage"
-+  )];
++  /*this._log.level = Log4Moz.Level[Preferences.get(
++    "services.aitc.storage.log.level"
++  )];*/
 +  let dapp = new Log4Moz.DumpAppender();
-+  dapp.level = Log4Moz.Level["Info"];
++  dapp.level = Log4Moz.Level["All"];
 +  this._log.addAppender(dapp);
++  this._log.info("Loading AitC storage module");
 +
 +  this._file = FileUtils.getFile(
 +    "ProfD", ["webapps", "webapps-pending.json"], true
