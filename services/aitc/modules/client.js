@@ -18,11 +18,8 @@ function AitcClient(token) {
   this.uri = token.endpoint.replace(/\/+$/, "");
   this.token = {id: token.id, key: token.key};
 
-  this._log = Log4Moz.repository.getLogger("Services.AITC.Client");
-  this._log.level = Log4Moz.Level[PREFS.get("log.level")];
-  let dapp = new Log4Moz.DumpAppender();
-  dapp.level = Log4Moz.Level["Info"];
-  this._log.addAppender(dapp);
+  this._log = Log4Moz.repository.getLogger("Service.AITC.Client");
+  //this._log.level = Log4Moz.Level[PREFS.get("log.level")];
   
   this._backoff = false;
   if (PREFS.get("backoff", 0)) {
@@ -259,7 +256,7 @@ AitcClient.prototype = {
     }
 
     let time = new Date().getTime();
-    let lastReq = PREFS.get("lastReq", 0);
+    let lastReq = parseInt(PREFS.get("lastReq", 0));
     let backoff = PREFS.get("backoff", 0);
 
     if (lastReq + (backoff * 1000) < time) {
@@ -268,14 +265,14 @@ AitcClient.prototype = {
     }
 
     this._backoff = false;
-    PREFS.put("backoff", 0);
+    PREFS.set("backoff", 0);
     return true;
   },
 
   // Set values from X-Backoff and Retry-After headers, if present
   _setBackoff: function _setBackoff(req) {
     let backoff = 0;
-    PREFS.put("lastReq", new Date().getTime());
+    PREFS.set("lastReq", String.toString(new Date().getTime()));
     if (req.response.headers['x-backoff']) {
       backoff = req.response.headers['x-backoff'];
     }
@@ -284,7 +281,7 @@ AitcClient.prototype = {
     }
     if (backoff) {
       self._backoff = true;
-      PREFS.put("backoff", backoff);
+      PREFS.set("backoff", backoff);
     }
   },
 };

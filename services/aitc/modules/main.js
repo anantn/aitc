@@ -18,11 +18,11 @@ Cu.import("resource://services-common/preferences.js");
 
 function AitcImpl() {
   this._log = Log4Moz.repository.getLogger("Service.AITC");
-  this._log.level = Log4Moz.Level[Preferences.get(
-    "services.aitc.log.logger.service"
-  )];
+  /*this._log.level = Log4Moz.Level[Preferences.get(
+    "services.aitc.service.log.level"
+  )];*/
   let dapp = new Log4Moz.DumpAppender();
-  dapp.level = Log4Moz.Level["Info"];
+  dapp.level = Log4Moz.Level["All"];
   this._log.addAppender(dapp);
   this._log.info("Loading AitC");
   this._manager = new AitcManager();
@@ -39,7 +39,7 @@ AitcImpl.prototype = {
 
     // This is called iff the user is currently looking the dashboard.
     function dashboardLoaded(browser) {
-      self._log.info("Dashboard was accessed");
+      self._log.info("Dashboard was accessed " + browser.contentWindow);
       self._manager.userOnDashboard(browser.contentWindow);
     }
     // This is called when the user's attention is elsewhere.

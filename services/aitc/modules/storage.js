@@ -22,13 +22,10 @@ Cu.import("resource://services-common/preferences.js");
  * storage to manage pending installs and uninstalls.
  */
 function AitcQueue(filename) {
-  this._log = Log4Moz.repository.getLogger("Service.AITC.Storage");
-  this._log.level = Log4Moz.Level[Preferences.get(
+  this._log = Log4Moz.repository.getLogger("Service.AITC.Storage.Queue");
+  /*this._log.level = Log4Moz.Level[Preferences.get(
     "services.aitc.storage.log.level"
-  )];
-  let dapp = new Log4Moz.DumpAppender();
-  dapp.level = Log4Moz.Level["Info"];
-  this._log.addAppender(dapp);
+  )];*/
 
   this._queue = [];
   this._writeLock = false;
@@ -48,27 +45,32 @@ AitcQueue.prototype = {
    * Add an object to the queue.
    */
   enqueue: function enqueue(obj, cb) {
+    this._log.info("Adding to queue " + obj);
+
     if (!cb) {
       throw new Error("enqueue called without callback");
     }
 
+    let self = this;
     this._queue.push(obj);
-    try {
-      this._putFile(function _enqueuePutFile() {
+    this._putFile(this._queue, function _enqueuePutFile(err) {
+      if (!err) {
         // Successful write.
         cb(null, true);
-      });
-    } catch (e) {
+        return;
+      }
       // Write unsuccessful, don't add to queue.
-      this._queue.pop();
+      self._queue.pop();
       cb(new Error(e), false);
-    }
+    });
   },
 
   /**
    * Remove the object at the head of the queue.
    */
   dequeue: function dequeue(cb) {
+    this._log.info("Removing head of queue");
+
     if (!cb) {
       throw new Error("dequeue called without callback");
     }
@@ -76,17 +78,17 @@ AitcQueue.prototype = {
       throw new Error("Queue is empty");
     }
 
+    let self = this;
     let obj = this._queue.shift();
-    try {
-      this._putFile(function _dequeuePutFile() {
+    this._putFile(this._queue, function _dequeuePutFile(err) {
+      if (!err) {
         // Successful write.
         cb(null, true);
-      });
-    } catch (e) {
+      }
       // Unsuccessful write, put back in queue.
-      this._queue.unshift(obj);
+      self._queue.unshift(obj);
       cb(new Error(e), false);
-    }
+    });
   },
 
   /**
@@ -96,6 +98,7 @@ AitcQueue.prototype = {
     if (!this._queue.length) {
       throw new Error("Queue is empty");
     }
+    this._log.info("Peek returning head of queue");
     return this._queue[0];
   },
 
@@ -113,29 +116,25 @@ AitcQueue.prototype = {
   _getFile: function _getFile(cb) {
     let channel = NetUtil.newChannel(this._file);
     channel.contentType = "application/json";
+
+    let self = this;
     NetUtil.asyncFetch(channel, function _asyncFetched(stream, res) {
       if (!Components.isSuccessCode(res)) {
-        Cu.reportError("Could not read from json file " + this._file.path);
-        if (cb) {
-          cb(null);
-        }
+        self._log.error("Could not read from json file " + this._file.path);
+        cb(null);
         return;
       }
 
-      let data = null;
+      let data = [];
       try {
         data = JSON.parse(
-          NetUtil.readInputStreamToString(stream, stream.available()) || "[]"
+          NetUtil.readInputStreamToString(stream, stream.available())
         );
         stream.close();
-        if (cb) {
-          cb(data);
-        }
+        cb(data);
       } catch (e) {
-        Cu.reportError("Could not parse JSON " + e);
-        if (cb) {
-          cb(null);
-        }
+        self._log.error("Could not parse JSON " + e);
+        cb(null);
       }
     });
   },
@@ -160,17 +159,24 @@ AitcQueue.prototype = {
       converter.charset = "UTF-8";
 
       // Asynchronously copy the data to the file.
+      this._log.info("Writing queue to disk");
+
       let self = this;
       let istream = converter.convertToInputStream(JSON.stringify(value));
-      NetUtil.asyncCopy(istream, ostream, function _asyncCopied() {
+      NetUtil.asyncCopy(istream, ostream, function _asyncCopied(result) {
         self._writeLock = false;
-        if (cb) {
-          cb();
+        if (Components.isSuccessCode(result)) {
+          self._log.info("asyncCopy succeeded");
+          cb(null);
+        } else {
+          let msg = "asyncCopy failed with " + result;
+          self._log.info(msg);
+          cb(msg);
         }
       });
     } catch (e) {
       this._writeLock = false;
-      throw e;
+      cb(msg);
     }
   },
 };
@@ -181,12 +187,10 @@ AitcQueue.prototype = {
  */
 function AitcStorageImpl() {
   this._log = Log4Moz.repository.getLogger("Service.AITC.Storage");
-  this._log.level = Log4Moz.Level[Preferences.get(
-    "services.aitc.log.logger.storage"
-  )];
-  let dapp = new Log4Moz.DumpAppender();
-  dapp.level = Log4Moz.Level["Info"];
-  this._log.addAppender(dapp);
+  /*this._log.level = Log4Moz.Level[Preferences.get(
+    "services.aitc.storage.log.level"
+  )];*/
+  this._log.info("Loading AitC storage module");
 
   this._file = FileUtils.getFile(
     "ProfD", ["webapps", "webapps-pending.json"], true

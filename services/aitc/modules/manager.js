@@ -28,18 +28,20 @@ function AitcManager() {
   this._pending = new AitcQueue("webapps-pending.json");
 
   this._log = Log4Moz.repository.getLogger("Service.AITC.Manager");
-  this._log.level = Log4Moz.Level[Preferences.get("manager.log.level")];
-  let dapp = new Log4Moz.DumpAppender();
-  dapp.level = Log4Moz.Level["Info"];
-  this._log.addAppender(dapp);
+  //this._log.level = Log4Moz.Level[Preferences.get("manager.log.level")];
+  this._log.info("Loading AitC manager module");
 }
 AitcManager.prototype = {
   get MARKETPLACE() {
     return PREFS.get("marketplace.url");
   },
 
+  get DASHBOARD() {
+    return PREFS.get("dashboard.url");
+  },
+
   get TOKEN_SERVER() {
-    return Preferences.get("tokenServer.url");
+    return PREFS.get("tokenServer.url");
   },
 
   /**
@@ -84,6 +86,8 @@ AitcManager.prototype = {
       return;
     }
 
+    // Make client will first try silent login, if it doesn't work, a popup
+    // will be shown in the context of the dashboard.
     let self = this;
     this._makeClient(function(err, client) {
       if (err) {
@@ -130,7 +134,7 @@ AitcManager.prototype = {
     };
 
     // Check if there are any PUTs pending first.
-    if (this._pending.length && !this._putTimer) {
+    if (this._pending.length() && !this._putTimer) {
       // There are pending PUTs and no timer, so let's process them.
       this._processQueue();
     } else {
@@ -168,7 +172,7 @@ AitcManager.prototype = {
       throw new Error("_checkServer called without a client");
     }
 
-    if (this._pending.length) {
+    if (this._pending.length()) {
       this._log.warn("_checkServer aborted because of pending PUTs");
       return;
     }
@@ -197,10 +201,10 @@ AitcManager.prototype = {
    */
   _processQueue: function _processPutQueue() {
     if (!this._client) {
-      throw new Error("_processPutQueue called without a client");
+      throw new Error("_processQueue called without a client");
     }
 
-    if (!this._pending.length) {
+    if (!this._pending.length()) {
       this._log.info("There are no pending items, _processQueue closing");
       if (this._putTimer) {
         this._putTimer.clear();
@@ -215,9 +219,13 @@ AitcManager.prototype = {
       return;
     }
 
+    this._log.info("Starting _processQueue");
+
     let self = this;
     this._putInProgress = true;
     let record = this._pending.peek();
+
+    this._log.info("Processing record " + record);
 
     function _clientCallback(err, done) {
       // Send to end of queue if unsuccessful or err.removeFromQueue is false.
@@ -259,7 +267,7 @@ AitcManager.prototype = {
 
     function _reschedule() {
       // If any apps remain in the queue, try again after putFreq.
-      if (self._pending.length) {
+      if (self._pending.length()) {
         CommonUtils.namedTimer(
           self._processQueue, PREFS.get("manager.putFreq"), self, "_putTimer"
         );
@@ -298,19 +306,17 @@ AitcManager.prototype = {
       }
 
       if (!err.response) {
-        let msg = "Error while fetching token " + err.message;
-        self._log.error(msg);
-        cb(new Error(msg), null);
+        self._log.error(err);
+        cb(err, null);
         return;
       }
       if (!err.response.success) {
-        let msg = "Error while fetching token (non-200) " + err.message;
-        self._log.error(msg);
-        cb(new Error(msg), null);
+        self._log.error(err);
+        cb(err, null);
         return;
       }
 
-      let msg = "Unknown error while fetching token " + err.message;
+      let msg = "Unknown error in _getToken " + err.message;
       self._log.error(msg);
       cb(new Error(msg), null);
     });
@@ -336,11 +342,11 @@ AitcManager.prototype = {
     }
 
     let self = this;
+    let ctxWin = win;
     function processAssertion(val) {
       self._log.info("Got assertion from BrowserID, creating token");
       self._getToken(val, function(err, token) {
         if (err) {
-          self._log.error("Could not obtain token from token server " + err);
           cb(err, null);
           return;
         }
@@ -353,14 +359,14 @@ AitcManager.prototype = {
         // If we were asked to let the user login, do the popup method
         if (login) {
           self._log.info("Could not obtain silent assertion, retrying login");
-          BrowserID.getAssertion(function gotAssertion(err, val) {
+          BrowserID.getAssertionWithLogin(function gotAssertion(err, val) {
             if (err) {
-              self._log.error("Could not obtain assertion even with login");
+              self._log.error(err);
               cb(err, false);
               return;
             }
             processAssertion(val);
-          }, {}, win);
+          }, {}, ctxWin);
           return;
         }
         self._log.error("Could not obtain assertion in _makeClient");
@@ -371,7 +377,10 @@ AitcManager.prototype = {
     }
 
     // Check if we can get assertion silently first
-    BrowserID.getAssertion(gotSilentAssertion, {sameEmailAs: this.MARKETPLACE});
+    self._log.info("Attempting to obtain assertion silently")
+    BrowserID.getAssertion(gotSilentAssertion, {
+      audience: this.DASHBOARD, sameEmailAs: this.MARKETPLACE
+    });
   },
 
 };

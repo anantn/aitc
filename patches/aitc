@@ -62,7 +62,7 @@ diff --git a/services/aitc/modules/client.js b/services/aitc/modules/client.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/client.js
-@@ -0,0 +1,290 @@
+@@ -0,0 +1,287 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -85,9 +85,6 @@ new file mode 100644
 +
 +  this._log = Log4Moz.repository.getLogger("Service.AITC.Client");
 +  //this._log.level = Log4Moz.Level[PREFS.get("log.level")];
-+  let dapp = new Log4Moz.DumpAppender();
-+  dapp.level = Log4Moz.Level["All"];
-+  this._log.addAppender(dapp);
 +  
 +  this._backoff = false;
 +  if (PREFS.get("backoff", 0)) {
@@ -324,7 +321,7 @@ new file mode 100644
 +    }
 +
 +    let time = new Date().getTime();
-+    let lastReq = PREFS.get("lastReq", 0);
++    let lastReq = parseInt(PREFS.get("lastReq", 0));
 +    let backoff = PREFS.get("backoff", 0);
 +
 +    if (lastReq + (backoff * 1000) < time) {
@@ -333,14 +330,14 @@ new file mode 100644
 +    }
 +
 +    this._backoff = false;
-+    PREFS.put("backoff", 0);
++    PREFS.set("backoff", 0);
 +    return true;
 +  },
 +
 +  // Set values from X-Backoff and Retry-After headers, if present
 +  _setBackoff: function _setBackoff(req) {
 +    let backoff = 0;
-+    PREFS.put("lastReq", new Date().getTime());
++    PREFS.set("lastReq", String.toString(new Date().getTime()));
 +    if (req.response.headers['x-backoff']) {
 +      backoff = req.response.headers['x-backoff'];
 +    }
@@ -349,7 +346,7 @@ new file mode 100644
 +    }
 +    if (backoff) {
 +      self._backoff = true;
-+      PREFS.put("backoff", backoff);
++      PREFS.set("backoff", backoff);
 +    }
 +  },
 +};
@@ -495,7 +492,7 @@ diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/manager.js
-@@ -0,0 +1,385 @@
+@@ -0,0 +1,386 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -539,7 +536,7 @@ new file mode 100644
 +  },
 +
 +  get TOKEN_SERVER() {
-+    return Preferences.get("tokenServer.url");
++    return PREFS.get("tokenServer.url");
 +  },
 +
 +  /**
@@ -632,7 +629,7 @@ new file mode 100644
 +    };
 +
 +    // Check if there are any PUTs pending first.
-+    if (this._pending.length && !this._putTimer) {
++    if (this._pending.length() && !this._putTimer) {
 +      // There are pending PUTs and no timer, so let's process them.
 +      this._processQueue();
 +    } else {
@@ -670,7 +667,7 @@ new file mode 100644
 +      throw new Error("_checkServer called without a client");
 +    }
 +
-+    if (this._pending.length) {
++    if (this._pending.length()) {
 +      this._log.warn("_checkServer aborted because of pending PUTs");
 +      return;
 +    }
@@ -699,10 +696,10 @@ new file mode 100644
 +   */
 +  _processQueue: function _processPutQueue() {
 +    if (!this._client) {
-+      throw new Error("_processPutQueue called without a client");
++      throw new Error("_processQueue called without a client");
 +    }
 +
-+    if (!this._pending.length) {
++    if (!this._pending.length()) {
 +      this._log.info("There are no pending items, _processQueue closing");
 +      if (this._putTimer) {
 +        this._putTimer.clear();
@@ -717,9 +714,13 @@ new file mode 100644
 +      return;
 +    }
 +
++    this._log.info("Starting _processQueue");
++
 +    let self = this;
 +    this._putInProgress = true;
 +    let record = this._pending.peek();
++
++    this._log.info("Processing record " + record);
 +
 +    function _clientCallback(err, done) {
 +      // Send to end of queue if unsuccessful or err.removeFromQueue is false.
@@ -761,7 +762,7 @@ new file mode 100644
 +
 +    function _reschedule() {
 +      // If any apps remain in the queue, try again after putFreq.
-+      if (self._pending.length) {
++      if (self._pending.length()) {
 +        CommonUtils.namedTimer(
 +          self._processQueue, PREFS.get("manager.putFreq"), self, "_putTimer"
 +        );
@@ -800,19 +801,17 @@ new file mode 100644
 +      }
 +
 +      if (!err.response) {
-+        let msg = "Error while fetching token " + err.message;
-+        self._log.error(msg);
-+        cb(new Error(msg), null);
++        self._log.error(err);
++        cb(err, null);
 +        return;
 +      }
 +      if (!err.response.success) {
-+        let msg = "Error while fetching token (non-200) " + err.message;
-+        self._log.error(msg);
-+        cb(new Error(msg), null);
++        self._log.error(err);
++        cb(err, null);
 +        return;
 +      }
 +
-+      let msg = "Unknown error while fetching token " + err.message;
++      let msg = "Unknown error in _getToken " + err.message;
 +      self._log.error(msg);
 +      cb(new Error(msg), null);
 +    });
@@ -843,7 +842,6 @@ new file mode 100644
 +      self._log.info("Got assertion from BrowserID, creating token");
 +      self._getToken(val, function(err, token) {
 +        if (err) {
-+          self._log.error("Could not obtain token from token server " + err);
 +          cb(err, null);
 +          return;
 +        }
@@ -856,9 +854,9 @@ new file mode 100644
 +        // If we were asked to let the user login, do the popup method
 +        if (login) {
 +          self._log.info("Could not obtain silent assertion, retrying login");
-+          BrowserID.getAssertion(function gotAssertion(err, val) {
++          BrowserID.getAssertionWithLogin(function gotAssertion(err, val) {
 +            if (err) {
-+              self._log.error("Could not obtain assertion even with login");
++              self._log.error(err);
 +              cb(err, false);
 +              return;
 +            }
@@ -885,7 +883,7 @@ diff --git a/services/aitc/modules/storage.js b/services/aitc/modules/storage.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/storage.js
-@@ -0,0 +1,371 @@
+@@ -0,0 +1,369 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -914,9 +912,6 @@ new file mode 100644
 +  /*this._log.level = Log4Moz.Level[Preferences.get(
 +    "services.aitc.storage.log.level"
 +  )];*/
-+  let dapp = new Log4Moz.DumpAppender();
-+  dapp.level = Log4Moz.Level["All"];
-+  this._log.addAppender(dapp);
 +
 +  this._queue = [];
 +  this._writeLock = false;
@@ -936,27 +931,32 @@ new file mode 100644
 +   * Add an object to the queue.
 +   */
 +  enqueue: function enqueue(obj, cb) {
++    this._log.info("Adding to queue " + obj);
++
 +    if (!cb) {
 +      throw new Error("enqueue called without callback");
 +    }
 +
++    let self = this;
 +    this._queue.push(obj);
-+    try {
-+      this._putFile(function _enqueuePutFile() {
++    this._putFile(this._queue, function _enqueuePutFile(err) {
++      if (!err) {
 +        // Successful write.
 +        cb(null, true);
-+      });
-+    } catch (e) {
++        return;
++      }
 +      // Write unsuccessful, don't add to queue.
-+      this._queue.pop();
++      self._queue.pop();
 +      cb(new Error(e), false);
-+    }
++    });
 +  },
 +
 +  /**
 +   * Remove the object at the head of the queue.
 +   */
 +  dequeue: function dequeue(cb) {
++    this._log.info("Removing head of queue");
++
 +    if (!cb) {
 +      throw new Error("dequeue called without callback");
 +    }
@@ -964,17 +964,17 @@ new file mode 100644
 +      throw new Error("Queue is empty");
 +    }
 +
++    let self = this;
 +    let obj = this._queue.shift();
-+    try {
-+      this._putFile(function _dequeuePutFile() {
++    this._putFile(this._queue, function _dequeuePutFile(err) {
++      if (!err) {
 +        // Successful write.
 +        cb(null, true);
-+      });
-+    } catch (e) {
++      }
 +      // Unsuccessful write, put back in queue.
-+      this._queue.unshift(obj);
++      self._queue.unshift(obj);
 +      cb(new Error(e), false);
-+    }
++    });
 +  },
 +
 +  /**
@@ -984,6 +984,7 @@ new file mode 100644
 +    if (!this._queue.length) {
 +      throw new Error("Queue is empty");
 +    }
++    this._log.info("Peek returning head of queue");
 +    return this._queue[0];
 +  },
 +
@@ -1001,34 +1002,25 @@ new file mode 100644
 +  _getFile: function _getFile(cb) {
 +    let channel = NetUtil.newChannel(this._file);
 +    channel.contentType = "application/json";
++
++    let self = this;
 +    NetUtil.asyncFetch(channel, function _asyncFetched(stream, res) {
 +      if (!Components.isSuccessCode(res)) {
-+        Cu.reportError("Could not read from json file " + this._file.path);
-+        if (cb) {
-+          cb(null);
-+        }
++        self._log.error("Could not read from json file " + this._file.path);
++        cb(null);
 +        return;
 +      }
 +
-+      let data = null;
++      let data = [];
 +      try {
-+        if (stream && stream.available()) {
-+          data = JSON.parse(
-+            NetUtil.readInputStreamToString(stream, stream.available())
-+          );
-+        } else {
-+          data = [];
-+        }
++        data = JSON.parse(
++          NetUtil.readInputStreamToString(stream, stream.available())
++        );
 +        stream.close();
-+
-+        if (cb) {
-+          cb(data);
-+        }
++        cb(data);
 +      } catch (e) {
-+        Cu.reportError("Could not parse JSON " + e);
-+        if (cb) {
-+          cb(null);
-+        }
++        self._log.error("Could not parse JSON " + e);
++        cb(null);
 +      }
 +    });
 +  },
@@ -1053,17 +1045,24 @@ new file mode 100644
 +      converter.charset = "UTF-8";
 +
 +      // Asynchronously copy the data to the file.
++      this._log.info("Writing queue to disk");
++
 +      let self = this;
 +      let istream = converter.convertToInputStream(JSON.stringify(value));
-+      NetUtil.asyncCopy(istream, ostream, function _asyncCopied() {
++      NetUtil.asyncCopy(istream, ostream, function _asyncCopied(result) {
 +        self._writeLock = false;
-+        if (cb) {
-+          cb();
++        if (Components.isSuccessCode(result)) {
++          self._log.info("asyncCopy succeeded");
++          cb(null);
++        } else {
++          let msg = "asyncCopy failed with " + result;
++          self._log.info(msg);
++          cb(msg);
 +        }
 +      });
 +    } catch (e) {
 +      this._writeLock = false;
-+      throw e;
++      cb(msg);
 +    }
 +  },
 +};
@@ -1077,9 +1076,6 @@ new file mode 100644
 +  /*this._log.level = Log4Moz.Level[Preferences.get(
 +    "services.aitc.storage.log.level"
 +  )];*/
-+  let dapp = new Log4Moz.DumpAppender();
-+  dapp.level = Log4Moz.Level["All"];
-+  this._log.addAppender(dapp);
 +  this._log.info("Loading AitC storage module");
 +
 +  this._file = FileUtils.getFile(
@@ -1315,7 +1311,7 @@ diff --git a/services/aitc/services-aitc.js b/services/aitc/services-aitc.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/services-aitc.js
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,16 @@
 +pref("dom.mozApps.whitelist", "https://myapps.mozillalabs.com");
 +
 +pref("services.aitc.dashboard.url", "https://myapps.mozillalabs.com");
@@ -1323,6 +1319,7 @@ new file mode 100644
 +//pref("services.aitc.tokenServer.url", "http://dev-token.services.mozilla.com");
 +//pref("services.aitc.tokenServer.url", "http://token2.reg.mtv1.dev.svc.mozilla.com");
 +pref("services.aitc.tokenServer.url", "https://stage-token.services.mozilla.com");
++//pref("services.aitc.tokenServer.url", "https://token.services.mozilla.com");
 +
 +pref("services.aitc.manager.putFreq", 5000);
 +pref("services.aitc.manager.getFreq", 30000);
