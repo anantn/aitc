@@ -18,12 +18,9 @@ Cu.import("resource://services-common/preferences.js");
 
 function Aitc() {
   this._log = Log4Moz.repository.getLogger("Service.AITC");
-  /*this._log.level = Log4Moz.Level[Preferences.get(
+  this._log.level = Log4Moz.Level[Preferences.get(
     "services.aitc.service.log.level"
-  )];*/
-  let dapp = new Log4Moz.DumpAppender();
-  dapp.level = Log4Moz.Level["All"];
-  this._log.addAppender(dapp);
+  )];
   this._log.info("Loading AitC");
 
   let self = this;
@@ -43,9 +40,25 @@ Aitc.prototype = {
 
     // This is called iff the user is currently looking the dashboard.
     function dashboardLoaded(browser) {
-      self._log.info("Dashboard was accessed " + browser.contentWindow);
-      self._manager.userOnDashboard(browser.contentWindow);
+      let win = browser.contentWindow;
+      self._log.info("Dashboard was accessed " + win);
+
+      // If page is ready to go, fire immediately.
+      if (win.document && win.document.readyState == "complete") {
+        self._manager.userOnDashboard(win);
+        return;
+      } 
+
+      // Only fire event after the page fully loads.
+      browser.contentWindow.addEventListener(
+        "DOMContentLoaded",
+        function _contentLoaded(event) {
+          self._manager.userOnDashboard(win);
+        },
+        false
+      );
     }
+
     // This is called when the user's attention is elsewhere.
     function dashboardUnloaded() {
       self._log.info("Dashboard closed or in background");

@@ -11,7 +11,6 @@ const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
 Cu.import("resource://gre/modules/Webapps.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/FileUtils.jsm");
-Cu.import("resource://gre/modules/identity/browserid.js");
 
 Cu.import("resource://services-aitc/client.js");
 Cu.import("resource://services-aitc/storage.js");
@@ -19,6 +18,7 @@ Cu.import("resource://services-common/log4moz.js");
 Cu.import("resource://services-common/preferences.js");
 Cu.import("resource://services-common/tokenserverclient.js");
 Cu.import("resource://services-common/utils.js");
+Cu.import("resource://services-identity/browserid.js");
 
 const PREFS = new Preferences("services.aitc.");
 
@@ -34,7 +34,7 @@ function AitcManager(cb) {
   this._putTimer = null;
 
   this._log = Log4Moz.repository.getLogger("Service.AITC.Manager");
-  //this._log.level = Log4Moz.Level[Preferences.get("manager.log.level")];
+  this._log.level = Log4Moz.Level[Preferences.get("manager.log.level")];
   this._log.info("Loading AitC manager module");
 
   // Check if we have pending PUTs from last time.
@@ -108,11 +108,13 @@ AitcManager.prototype = {
     }
 
     // Make client will first try silent login, if it doesn't work, a popup
-    // will be shown in the context of the dashboard.
+    // will be shown in the context of the dashboard. We shouldn't be
+    // trying to make a client every time this function is called, there is
+    // room for optimization (Bug 750607).
     let self = this;
     this._makeClient(function(err, client) {
       if (err) {
-        // XXX: Surface this error the user, somehow?
+        // Notify user of error (Bug 750610).
         self._log.error("Client not created at Dashboard");
         return;
       }

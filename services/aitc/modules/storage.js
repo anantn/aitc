@@ -33,9 +33,9 @@ Cu.import("resource://services-common/preferences.js");
  */
 function AitcQueue(filename, cb) {
   this._log = Log4Moz.repository.getLogger("Service.AITC.Storage.Queue");
-  /*this._log.level = Log4Moz.Level[Preferences.get(
+  this._log.level = Log4Moz.Level[Preferences.get(
     "services.aitc.storage.log.level"
-  )];*/
+  )];
 
   this._queue = [];
   this._writeLock = false;
