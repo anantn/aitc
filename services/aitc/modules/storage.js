@@ -20,8 +20,18 @@ Cu.import("resource://services-common/preferences.js");
 /**
  * Provides a file-backed queue. Currently used by manager.js as persistent
  * storage to manage pending installs and uninstalls.
+ *
+ * @param filename     
+ *        (String)    The file backing this queue will be named as this string.
+ *
+ * @param cb          
+ *        (Function)  This function will be called when the queue is ready to
+ *                    use. *DO NOT* call any methods on this object until the
+ *                    callback is invoked, if you do so, none of your operations
+ *                    will be persisted on disk.
+ *
  */
-function AitcQueue(filename) {
+function AitcQueue(filename, cb) {
   this._log = Log4Moz.repository.getLogger("Service.AITC.Storage.Queue");
   /*this._log.level = Log4Moz.Level[Preferences.get(
     "services.aitc.storage.log.level"
@@ -31,13 +41,20 @@ function AitcQueue(filename) {
   this._writeLock = false;
   this._file = FileUtils.getFile("ProfD", ["webapps", filename], true);
 
+  this._log.info("AitcQueue instance loading");
+
   let self = this;
   if (this._file.exists()) {
     this._getFile(function _gotFile(data) {
       if (data) {
         self._queue = data;
       }
+      self._log.info("AitcQueue instance created");
+      cb(true);
     });
+  } else {
+    self._log.info("AitcQueue instance created");
+    cb(true);
   }
 }
 AitcQueue.prototype = {
@@ -61,7 +78,7 @@ AitcQueue.prototype = {
       }
       // Write unsuccessful, don't add to queue.
       self._queue.pop();
-      cb(new Error(e), false);
+      cb(new Error(err), false);
     });
   },
 
@@ -84,10 +101,11 @@ AitcQueue.prototype = {
       if (!err) {
         // Successful write.
         cb(null, true);
+        return;
       }
       // Unsuccessful write, put back in queue.
       self._queue.unshift(obj);
-      cb(new Error(e), false);
+      cb(err, false);
     });
   },
 
@@ -150,19 +168,16 @@ AitcQueue.prototype = {
 
     this._writeLock = true;
     try {
-      let ostream = FileUtils.openSafeFileOutputStream(
-        this._file, FileUtils.MODE_CREATE // Create file if it doesn't exist
-      );
+      let ostream = FileUtils.openSafeFileOutputStream(this._file);
 
       let converter = Cc["@mozilla.org/intl/scriptableunicodeconverter"].
                       createInstance(Ci.nsIScriptableUnicodeConverter);
       converter.charset = "UTF-8";
+      let istream = converter.convertToInputStream(JSON.stringify(value));
 
       // Asynchronously copy the data to the file.
-      this._log.info("Writing queue to disk");
-
       let self = this;
-      let istream = converter.convertToInputStream(JSON.stringify(value));
+      this._log.info("Writing queue to disk");
       NetUtil.asyncCopy(istream, ostream, function _asyncCopied(result) {
         self._writeLock = false;
         if (Components.isSuccessCode(result)) {
@@ -209,7 +224,7 @@ AitcStorageImpl.prototype = {
    */
   processApps: function processApps(remoteApps, callback) {
     let self = this;
-    this._log.info("Server check got " + remoteApps.length + "apps");
+    this._log.info("Server check got " + remoteApps.length + " apps");
 
     // Get the set of local apps, and then pass to _processApps.
     // _processApps will check for the validity of remoteApps.
@@ -235,7 +250,6 @@ AitcStorageImpl.prototype = {
       localApps[app.origin] = app;
     }
 
-
     // Iterate over remote apps, and find out what changes we must apply.
     let toInstall = [];
     for each (let app in remoteApps) {
@@ -245,14 +259,19 @@ AitcStorageImpl.prototype = {
 
       // If there is a remote app that isn't local or 
       // if the remote app was installed later.
-      if ((!(origin in localApps)) ||
-           localApps[origin].installTime < app.installTime) {
-        
-        let id = localApps[origin].id || DOMApplicationRegistry.makeAppId();
-
-        // We should install this app locally
+      let id = null;
+      if (!localApps[origin]) {
+        id = DOMApplicationRegistry.makeAppId();
+      }
+      if (localApps[origin] &&
+          (localApps[origin].installTime < app.installTime)) {
+        id = localApps[origin].id;
+      }
+      
+      // We should (re)install this app locally
+      if (id) {
         try {          
-          let record = {id: id, value: this._makeLocalApp(app)};
+          let record = {id: id, value: app};
           toInstall.push(record);
         } catch (e) {
           // App was an invalid record
@@ -281,7 +300,9 @@ AitcStorageImpl.prototype = {
 
     let self = this;
     function onManifestsUpdated() {
-      finalCommands.push(toUninstall);
+      if (toUninstall.length) {
+        finalCommands.push(toUninstall);
+      }
       if (finalCommands.length) {
         self._log.info(
           "processUpdates finished fetching manifests, calling updateApps"
@@ -308,7 +329,7 @@ AitcStorageImpl.prototype = {
       this._getManifest(url, function(err, manifest) {
         if (!err) {
           app.value.manifest = manifest;
-          finalCommands.push({id: app.id, value: app.value});
+          finalCommands.push(app);
           self._log.info(app.id + " was added to finalCommands");
         } else {
           self._log.debug("Couldn't fetch manifest at " + url + ": " + err);

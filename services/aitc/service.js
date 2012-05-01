@@ -35,8 +35,9 @@ AitcService.prototype = {
         }
 
         CommonUtils.namedTimer(function() {
+          // Kick-off!
           Cu.import("resource://services-aitc/main.js");
-          Aitc.init();
+          new Aitc();
         }, 2000, this, "timer");
         break;
     }

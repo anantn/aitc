@@ -18,18 +18,40 @@ Cu.import("resource://services-aitc/storage.js");
 Cu.import("resource://services-common/log4moz.js");
 Cu.import("resource://services-common/preferences.js");
 Cu.import("resource://services-common/tokenserverclient.js");
+Cu.import("resource://services-common/utils.js");
 
-const PREFS = new Preferences("services.aitc.")
-function AitcManager() {
+const PREFS = new Preferences("services.aitc.");
+
+/**
+ * The constructor for the manager takes a callback, which will be invoked when
+ * the manager is ready (construction is asynchronous). *DO NOT* call any
+ * methods on this object until the callback has been invoked, doing so will
+ * lead to undefined behaviour.
+ */
+function AitcManager(cb) {
   this._client = null;
   this._getTimer = null;
   this._putTimer = null;
 
-  this._pending = new AitcQueue("webapps-pending.json");
-
   this._log = Log4Moz.repository.getLogger("Service.AITC.Manager");
   //this._log.level = Log4Moz.Level[Preferences.get("manager.log.level")];
   this._log.info("Loading AitC manager module");
+
+  // Check if we have pending PUTs from last time.
+  let self = this;
+  this._pending = new AitcQueue("webapps-pending.json", function _queueDone() {
+    // Inform the AitC service that we're good to go!
+    self._log.info("AitC manager has finished loading");
+    cb(true);
+
+    // Schedule them, but only if we can get a silent assertion.
+    self._makeClient(function(err, client) {
+      if (!err && client) {
+        self._client = client;
+        self._processQueue();
+      }
+    }, false);
+  });
 }
 AitcManager.prototype = {
   get MARKETPLACE() {
@@ -52,7 +74,7 @@ AitcManager.prototype = {
     // Add this to the equeue.
     let self = this;
     let obj = {type: type, app: app, retries: 0, lastTime: 0};
-    this._pending.enqueue(app, function _enqueued(err, rec) {
+    this._pending.enqueue(obj, function _enqueued(err, rec) {
       if (err) {
         self._log.error("Could not add " + type + " " + app + " to queue");
         return;
@@ -65,8 +87,7 @@ AitcManager.prototype = {
       }
 
       // If not, try a silent client creation.
-      let self = this;
-      this._makeClient(function(err, client) {
+      self._makeClient(function(err, client) {
         if (!err && client) {
           self._client = client;
           self._processQueue();
@@ -124,29 +145,29 @@ AitcManager.prototype = {
       return;
     }
 
-    // Create timer for GETs.
-    this._getTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
-    let self = this;
-    let event = {
-      notify: function notify(timer) {
-        self._checkServer();
-      }
-    };
-
     // Check if there are any PUTs pending first.
-    if (this._pending.length() && !this._putTimer) {
+    if (this._pending.length() && !(this._putTimer)) {
       // There are pending PUTs and no timer, so let's process them.
       this._processQueue();
     } else {
-      // Do one GET check right now.
-      this._checkServer();
+      // Do one GET soon.
+      CommonUtils.nextTick(this._checkServer, this);
     }
 
     // Start the timer for GETs. In case there were pending PUTs, _checkServer
     // will automatically abort, and we'll retry after getFreq.
+    let self = this;
+    let getFreq = PREFS.get("manager.getFreq");
+    this._log.info("Starting GET timer");
+    this._getTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
     this._getTimer.initWithCallback(
-      event, PREFS.get("manager.getFreq", Ci.nsITimer.TYPE_REPEATING_SLACK)
+      {
+        notify: function _getTimerNotify() {
+          self._checkServer();
+        },
+      }, getFreq, Ci.nsITimer.TYPE_REPEATING_SLACK
     );
+    this._log.info("GET timer set, next attempt in " + getFreq + "ms");
   },
 
   /**
@@ -178,19 +199,26 @@ AitcManager.prototype = {
     }
 
     // Do a GET
+    let self = this;
+    this._log.info("Attempting to getApps");
     this._client.getApps(function gotApps(err, apps) {
       if (err) {
         // Error was logged in client.
         return;
       }
-      if (!app) {
+      if (!apps) {
         // No changes, got 304.
+        return;
+      }
+      if (!apps.length) {
+        // Empty array, nothing to process
+        self._log.info("No apps found on remote server");
         return;
       }
 
       // Send list of remote apps to storage to apply locally
       AitcStorage.processApps(apps, function processedApps() {
-        this._log.info("processApps completed successfully, changes applied");
+        self._log.info("processApps completed successfully, changes applied");
       });
     });
   },
@@ -219,17 +247,16 @@ AitcManager.prototype = {
       return;
     }
 
-    this._log.info("Starting _processQueue");
-
     let self = this;
     this._putInProgress = true;
     let record = this._pending.peek();
 
-    this._log.info("Processing record " + record);
-
+    this._log.info("Processing record type " + record.type);
     function _clientCallback(err, done) {
       // Send to end of queue if unsuccessful or err.removeFromQueue is false.
       if (err && !err.removeFromQueue) {
+        self._log.info("PUT failed, re-adding to queue");
+
         // Update retries and time
         record.retries += 1;
         record.lastTime = new Date().getTime();
@@ -237,41 +264,55 @@ AitcManager.prototype = {
         // Add updated record to the end of the queue.
         self._pending.enqueue(record, function(err, done) {
           if (err) {
-            self._log.error("enqueue failed " + err);
+            self._log.error("Enqueue failed " + err);
             _reschedule();
             return;
           }
           // If record was successfully added, remove old record.
           self._pending.dequeue(function(err, done) {
             if (err) {
-              self._log.error("dequeue failed " + err);
+              self._log.error("Dequeue failed " + err);
             }
             _reschedule();
             return;
           });
         });
-        return;
       }
 
       // If succeeded or client told us to remove from queue
-      if (err.removeFromQueue || done) {
-        self._pending.dequeue(function(err, done) {
-          if (err) {
-            self._log.error("queue dequeue failed " + e);
-          }
-          _reschedule();
-        });
-        return;
-      }
+      self._log.info("_putApp asked us to remove it from queue");
+      self._pending.dequeue(function(err, done) {
+        if (err) {
+          self._log.error("Dequeue failed " + e);
+        }
+        _reschedule();
+      });
     }
 
     function _reschedule() {
-      // If any apps remain in the queue, try again after putFreq.
-      if (self._pending.length()) {
-        CommonUtils.namedTimer(
-          self._processQueue, PREFS.get("manager.putFreq"), self, "_putTimer"
-        );
+      // Release PUT lock
+      self._putInProgress = false;
+
+      // We just finished PUTting an object, try the next one immediately,
+      // but only if haven't tried it already in the last putFreq (ms).
+      if (!self._pending.length()) {
+        return;
       }
+
+      let obj = self._pending.peek();
+      let cTime = new Date().getTime();
+      let freq = PREFS.get("manager.putFreq");
+
+      // We tried this object recently, we'll come back to it later.
+      if (obj.lastTime && ((cTime - obj.lastTime) < freq)) {
+        self._log.info("Scheduling next processQueue in " + freq);
+        CommonUtils.namedTimer(self._processQueue, freq, self, "_putTimer");
+        return;
+      }
+
+      // Haven't tried this PUT yet, do it immediately.
+      self._log.info("Queue non-empty, processing next PUT");
+      self._processQueue();
     }
 
     switch (record.type) {
@@ -279,13 +320,20 @@ AitcManager.prototype = {
         this._client.remoteInstall(record.app, _clientCallback);
         break;
       case "uninstall":
+        record.app.deleted = true;
         this._client.remoteUninstall(record.app, _clientCallback);
         break;
       default:
         this._log.warn(
           "Unrecognized type " + record.type + " in queue, removing"
         );
-        this._pending.dequeue(_clientCallback);
+        let self = this;
+        this._pending.dequeue(function _dequeued(err) {
+          if (err) {
+            self._log.error("Dequeue of unrecognized app type failed");
+          }
+          _reschedule();
+        });
     }
   },
 
@@ -356,7 +404,7 @@ AitcManager.prototype = {
     function gotSilentAssertion(err, val) {
       self._log.info("gotSilentAssertion called");
       if (err) {
-        // If we were asked to let the user login, do the popup method
+        // If we were asked to let the user login, do the popup method.
         if (login) {
           self._log.info("Could not obtain silent assertion, retrying login");
           BrowserID.getAssertionWithLogin(function gotAssertion(err, val) {
@@ -369,7 +417,7 @@ AitcManager.prototype = {
           }, {}, ctxWin);
           return;
         }
-        self._log.error("Could not obtain assertion in _makeClient");
+        self._log.warn("Could not obtain assertion in _makeClient");
         cb(err, false);
       } else {
         processAssertion(val);

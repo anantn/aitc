@@ -16,7 +16,7 @@ Cu.import("resource://services-aitc/manager.js");
 Cu.import("resource://services-common/log4moz.js");
 Cu.import("resource://services-common/preferences.js");
 
-function AitcImpl() {
+function Aitc() {
   this._log = Log4Moz.repository.getLogger("Service.AITC");
   /*this._log.level = Log4Moz.Level[Preferences.get(
     "services.aitc.service.log.level"
@@ -25,16 +25,20 @@ function AitcImpl() {
   dapp.level = Log4Moz.Level["All"];
   this._log.addAppender(dapp);
   this._log.info("Loading AitC");
-  this._manager = new AitcManager();
+
+  let self = this;
+  this._manager = new AitcManager(function _managerDone() {
+    self._init();
+  });
 }
-AitcImpl.prototype = {
+Aitc.prototype = {
   get DASHBOARD() {
     return Preferences.get("services.aitc.dashboard.url");
   },
 
   // The goal of the init function is to be ready to activate the AITC
   // client whenever the user is looking at the dashboard.
-  init: function init() {
+  _init: function init() {
     let self = this;
 
     // This is called iff the user is currently looking the dashboard.
@@ -53,10 +57,10 @@ AitcImpl.prototype = {
     // about:home and then navigate to the dashboard, or navigation via
     // links on the currently open tab.
     let listener = {
-      onLocationChange: function onLocationChange(browser, progress, req, location, flags) {
+      onLocationChange: function onLocationChange(browser, pr, req, loc, flag) {
         let win = Services.wm.getMostRecentWindow("navigator:browser");
         if (win.gBrowser.selectedBrowser == browser) {
-          let uri = location.spec.substring(0, self.DASHBOARD.length);
+          let uri = loc.spec.substring(0, self.DASHBOARD.length);
           if (uri == self.DASHBOARD) {
             dashboardLoaded(browser);
           }
@@ -126,7 +130,3 @@ AitcImpl.prototype = {
     }
   }
 };
-
-XPCOMUtils.defineLazyGetter(this, "Aitc", function() {
-  return new AitcImpl();
-});

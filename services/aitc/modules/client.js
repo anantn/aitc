@@ -8,9 +8,11 @@ const EXPORTED_SYMBOLS = ['AitcClient'];
 
 const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
-Cu.import("resource://services-common/rest.js");
 Cu.import("resource://services-common/log4moz.js");
 Cu.import("resource://services-common/preferences.js");
+Cu.import("resource://services-common/rest.js");
+Cu.import("resource://services-common/utils.js");
+Cu.import("resource://services-crypto/utils.js");
 
 const PREFS = new Preferences("services.aitc.client.");
 
@@ -114,8 +116,17 @@ AitcClient.prototype = {
 
       try {
         let tmp = JSON.parse(req.response.body);
-        self._log.info("getApps succeeded and got " + tmp.length + " apps");
-        cb(null, tmp["apps"]);
+        tmp = tmp["apps"];
+
+        // Convert apps from remote to local format
+        let apps = [];
+        for each (let app in tmp) {
+          apps.push(self._makeLocalApp(app));
+        }
+
+        self._log.info("getApps succeeded and got " + apps.length);
+        cb(null, apps);
+
         // Don't update lastModified until we know cb succeeded.
         self._appsLastModified = parseInt(req.response.headers['x-timestamp']);
       } catch (e) {
@@ -131,7 +142,7 @@ AitcClient.prototype = {
    */
   _makeRemoteApp: function _makeRemoteApp(app) {
     for each (let key in this.requiredLocalKeys) {
-      if (!app.key) {
+      if (!app[key]) {
         throw new Error("Local app missing key " + key);
       }
     }
@@ -157,7 +168,7 @@ AitcClient.prototype = {
    */
   _makeLocalApp: function _makeLocalApp(app) {
     for each (let key in this._requiredRemoteKeys) {
-      if (!app.key) {
+      if (!app[key]) {
         throw new Error("Remote app missing key " + key);
       }
     }
@@ -193,13 +204,15 @@ AitcClient.prototype = {
       return;
     }
 
-    let uri = this._makeAppURI(app.record.origin);
+    let uri = this._makeAppURI(app.origin);
     let req = new TokenAuthenticatedRESTRequest(uri, this.token);
     if (app.modified) {
       req.setHeader("X-If-Unmodified-Since", app.modified);
     }
 
-    req.put(JSON.stringify(appRec), function _tryPuttingAppFinished(error) {
+    let self = this;
+    this._log.info("Trying to _putApp to " + uri);
+    req.put(JSON.stringify(app), function _tryPuttingAppFinished(error) {
       if (error) {
         self._log.error("_putApp request error " + error);
         cb(error, null);
@@ -240,12 +253,14 @@ AitcClient.prototype = {
    * Utility methods.
    */
   _error: function _error(req) {
-    this._log.error("Catch-all error for request for: " + 
+    this._log.error("Catch-all error for request: " + 
       req.uri.asciiSpec + req.response.status + " with: " + req.response.body);
   },
 
   _makeAppURI: function _makeAppURI(origin) {
-    let part = CryptoUtils.sha1Base64URLFriendly(origin);
+    let part = CommonUtils.encodeBase64URL(
+      CryptoUtils._sha1(origin)
+    ).replace(/=/, "");
     return this.uri + "/apps/" + part;
   },
 
@@ -257,7 +272,7 @@ AitcClient.prototype = {
 
     let time = new Date().getTime();
     let lastReq = parseInt(PREFS.get("lastReq", 0));
-    let backoff = PREFS.get("backoff", 0);
+    let backoff = parseInt(PREFS.get("backoff", 0));
 
     if (lastReq + (backoff * 1000) < time) {
       this._log.warn("X-Backoff is " + backoff + ", not making request");
@@ -265,14 +280,16 @@ AitcClient.prototype = {
     }
 
     this._backoff = false;
-    PREFS.set("backoff", 0);
+    PREFS.set("backoff", "0");
     return true;
   },
 
   // Set values from X-Backoff and Retry-After headers, if present
   _setBackoff: function _setBackoff(req) {
     let backoff = 0;
-    PREFS.set("lastReq", String.toString(new Date().getTime()));
+    let time = new Date().getTime();
+    PREFS.set("lastReq", time + "");
+
     if (req.response.headers['x-backoff']) {
       backoff = req.response.headers['x-backoff'];
     }
@@ -280,8 +297,8 @@ AitcClient.prototype = {
       backoff = req.response.headers['retry-after'];
     }
     if (backoff) {
-      self._backoff = true;
-      PREFS.set("backoff", backoff);
+      this._backoff = true;
+      PREFS.set("backoff", backoff + "");
     }
   },
 };
