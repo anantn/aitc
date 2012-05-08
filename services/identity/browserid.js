@@ -393,6 +393,4 @@ BrowserIDSandbox.prototype = {
   },
 };
 
-XPCOMUtils.defineLazyGetter(this, "BrowserID", function() {
-  return new BrowserIDService();
-});
+let BrowserID = new BrowserIDService();
