@@ -1,5 +1,6 @@
 # HG changeset patch
-# Parent 55cc519b5c8e96755c9358a2f8384dbec37c4953
+# Parent 9f12dd0017a9e94ef0bf7dd48268b548a9c8871e
+aitc-client
 
 diff --git a/services/Makefile.in b/services/Makefile.in
 --- a/services/Makefile.in
@@ -62,7 +63,7 @@ diff --git a/services/aitc/modules/client.js b/services/aitc/modules/client.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/client.js
-@@ -0,0 +1,304 @@
+@@ -0,0 +1,327 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -79,21 +80,27 @@ new file mode 100644
 +Cu.import("resource://services-common/utils.js");
 +Cu.import("resource://services-crypto/utils.js");
 +
-+const PREFS = new Preferences("services.aitc.client.");
-+
-+function AitcClient(token) {
++/**
++ * First argument is the full URL to the token server endpoint.
++ * Second argument is an object of type "Preferences" as created by
++ * preferences.js in services-common.
++ */
++function AitcClient(token, state) {
 +  this.uri = token.endpoint.replace(/\/+$/, "");
 +  this.token = {id: token.id, key: token.key};
 +
 +  this._log = Log4Moz.repository.getLogger("Service.AITC.Client");
-+  //this._log.level = Log4Moz.Level[PREFS.get("log.level")];
++  this._log.level = Log4Moz.Level[
++    Preferences.get("services.aitc.client.log.level")
++  ];
 +  
++  this._state = state;
 +  this._backoff = false;
-+  if (PREFS.get("backoff", 0)) {
++  if (state.get("backoff", 0)) {
 +    this._backoff = true;
 +  }
 +
-+  this._appsLastModified = null;
++  this._appsLastModified = parseInt(state.get("lastModified", "0"));
 +  this._log.info("Client initialized with token endpoint: " + this.uri);
 +}
 +AitcClient.prototype = {
@@ -157,47 +164,57 @@ new file mode 100644
 +    }
 +
 +    let self = this;
-+    req.get(function(error) {
-+      if (error) {
-+        self._log.error("getApps request error " + error);
-+        cb(error, null);
-+        return;
-+      }
-+
-+      // Set X-Backoff or Retry-After, if needed
-+      self._setBackoff(req);
-+      
-+      // Process response
-+      if (req.response.status == 304) {
-+        self._log.info("getApps returned 304");
-+        cb(null, null);
-+        return;
-+      }
-+      if (req.response.status != 200) {
-+        self._error(req);
-+        cb(new Error("Unexpected error with getApps"), null);
-+        return;
-+      }
-+
-+      try {
-+        let tmp = JSON.parse(req.response.body);
-+        tmp = tmp["apps"];
-+
-+        // Convert apps from remote to local format
-+        let apps = [];
-+        for each (let app in tmp) {
-+          apps.push(self._makeLocalApp(app));
-+        }
-+
-+        self._log.info("getApps succeeded and got " + apps.length);
-+        cb(null, apps);
-+
-+        // Don't update lastModified until we know cb succeeded.
-+        self._appsLastModified = parseInt(req.response.headers['x-timestamp']);
-+      } catch (e) {
-+        self._log.error("Exception in getApps " + e);
-+      }
++    req.get(function(err) {
++      self._processGetApps(err, cb);
 +    });
++  },
++
++  /**
++   * GET request returned from getApps, process.
++   */
++  _processGetApps: function _processGetApps(error, cb) {
++    if (error) {
++      this._log.error("getApps request error " + error);
++      cb(error, null);
++      return;
++    }
++
++    // Set X-Backoff or Retry-After, if needed.
++    this._setBackoff(req);
++    
++    // Process response.
++    if (req.response.status == 304) {
++      this._log.info("getApps returned 304");
++      cb(null, null);
++      return;
++    }
++    if (req.response.status != 200) {
++      this._error(req);
++      cb(new Error("Unexpected error with getApps"), null);
++      return;
++    }
++
++    try {
++      let tmp = JSON.parse(req.response.body);
++      tmp = tmp["apps"];
++      // Convert apps from remote to local format.
++      let apps = tmp.map(this._makeLocalApp, this);
++      this._log.info("getApps succeeded and got " + apps.length);
++    } catch (e) {
++      let err = new Error("Exception in getApps " + e);
++      this._log.error(err);
++      cb(err, null);
++    }
++    
++    // Return success.
++    try {
++      cb(null, apps);
++      // Don't update lastModified until we know cb succeeded.
++      this._appsLastModified = parseInt(req.response.headers['x-timestamp']);
++      state.put("lastModified", ""  + this._appsLastModified);
++    } catch (e) {
++      this._log("Exception in getApps callback " + e);
++    }
 +  },
 +
 +  /**
@@ -257,7 +274,7 @@ new file mode 100644
 +   * if it fails.
 +   */
 +  _putApp: function _putApp(app, cb) {
-+    if (!this._checkBackoff) {
++    if (!this._checkBackoff()) {
 +      // PUT requests may qualify as the "minimum number of additional requests
 +      // required to maintain consistency of their stored data". However, it's
 +      // better to keep server load low, even if it means user's apps won't
@@ -272,46 +289,53 @@ new file mode 100644
 +    let uri = this._makeAppURI(app.origin);
 +    let req = new TokenAuthenticatedRESTRequest(uri, this.token);
 +    if (app.modified) {
-+      req.setHeader("X-If-Unmodified-Since", app.modified);
++      req.setHeader("X-If-Unmodified-Since", "" + app.modified);
 +    }
 +
 +    let self = this;
 +    this._log.info("Trying to _putApp to " + uri);
-+    req.put(JSON.stringify(app), function _tryPuttingAppFinished(error) {
-+      if (error) {
-+        self._log.error("_putApp request error " + error);
-+        cb(error, null);
-+        return;
-+      }
-+
-+      self._setBackoff(req);
-+
-+      let err = null;
-+      switch (req.response.status) {
-+        case 201:
-+        case 204:
-+          self._log.info("_putApp succeeded");
-+          cb(null, true);
-+          break;
-+
-+        case 400:
-+        case 412:
-+        case 413:
-+          let msg = "_putApp returned: " + req.response.status;
-+          self._log.warn(msg);
-+          err = new Error(msg);
-+          err.removeFromQueue = true;
-+          cb(err, null);
-+          break;
-+
-+        default:
-+          self._error(req);
-+          err = new Error("Unexpected error with _putApp");
-+          err.removeFromQueue = false;
-+          cb(err, null);
-+          break;
-+      }
++    req.put(JSON.stringify(app), function(err) {
++      self._processPutApp(err, cb);
 +    });
++  },
++
++  /**
++   * PUT from _putApp finished, process.
++   */
++  _processPutApp: function _processPutApp(error, cb) {
++    if (error) {
++      this._log.error("_putApp request error " + error);
++      cb(error, null);
++      return;
++    }
++
++    this._setBackoff(req);
++
++    let err = null;
++    switch (req.response.status) {
++      case 201:
++      case 204:
++        this._log.info("_putApp succeeded");
++        cb(null, true);
++        break;
++
++      case 400:
++      case 412:
++      case 413:
++        let msg = "_putApp returned: " + req.response.status;
++        this._log.warn(msg);
++        err = new Error(msg);
++        err.proceed = true;
++        cb(err, null);
++        break;
++
++      default:
++        this._error(req);
++        err = new Error("Unexpected error with _putApp");
++        err.proceed = false;
++        cb(err, null);
++        break;
++    }
 +  },
 +
 +  /**
@@ -325,7 +349,7 @@ new file mode 100644
 +  _makeAppURI: function _makeAppURI(origin) {
 +    let part = CommonUtils.encodeBase64URL(
 +      CryptoUtils._sha1(origin)
-+    ).replace(/=/, "");
++    ).replace("=", "");
 +    return this.uri + "/apps/" + part;
 +  },
 +
@@ -335,1017 +359,44 @@ new file mode 100644
 +      return true;
 +    }
 +
-+    let time = new Date().getTime();
-+    let lastReq = parseInt(PREFS.get("lastReq", 0));
-+    let backoff = parseInt(PREFS.get("backoff", 0));
++    let time = Date.now();
++    let backoff = parseInt(state.get("backoff", 0));
 +
-+    if (lastReq + (backoff * 1000) < time) {
-+      this._log.warn("X-Backoff is " + backoff + ", not making request");
++    if (time < backoff) {
++      this._log.warn(backoff - time + " left for backoff, not making request");
 +      return false;
 +    }
 +
 +    this._backoff = false;
-+    PREFS.set("backoff", "0");
++    state.set("backoff", "0");
 +    return true;
 +  },
 +
 +  // Set values from X-Backoff and Retry-After headers, if present
 +  _setBackoff: function _setBackoff(req) {
 +    let backoff = 0;
-+    let time = new Date().getTime();
-+    PREFS.set("lastReq", time + "");
++    let time = Date.now();
 +
-+    if (req.response.headers['x-backoff']) {
-+      backoff = req.response.headers['x-backoff'];
++    if (req.response.headers["x-backoff"]) {
++      backoff = req.response.headers["x-backoff"];
++      this._log.warn("X-Backoff header was seen: " + backoff);
 +    }
-+    if (req.response.headers['retry-after']) {
-+      backoff = req.response.headers['retry-after'];
++    if (req.response.headers["retry-after"]) {
++      backoff = req.response.headers["retry-after"];
++      this._log.warn("Retry-Header header was seen: " + backoff);
 +    }
 +    if (backoff) {
 +      this._backoff = true;
-+      PREFS.set("backoff", backoff + "");
++      state.set("backoff", "" + (time + (backoff * 1000)));
 +    }
 +  },
 +};
-\ No newline at end of file
-diff --git a/services/aitc/modules/main.js b/services/aitc/modules/main.js
-new file mode 100644
---- /dev/null
-+++ b/services/aitc/modules/main.js
-@@ -0,0 +1,132 @@
-+/* This Source Code Form is subject to the terms of the Mozilla Public
-+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
-+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
-+
-+"use strict";
-+
-+const EXPORTED_SYMBOLS = ["Aitc"];
-+
-+const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
-+
-+Cu.import("resource://gre/modules/Webapps.jsm");
-+Cu.import("resource://gre/modules/Services.jsm");
-+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-+
-+Cu.import("resource://services-aitc/manager.js");
-+Cu.import("resource://services-common/log4moz.js");
-+Cu.import("resource://services-common/preferences.js");
-+
-+function Aitc() {
-+  this._log = Log4Moz.repository.getLogger("Service.AITC");
-+  /*this._log.level = Log4Moz.Level[Preferences.get(
-+    "services.aitc.service.log.level"
-+  )];*/
-+  let dapp = new Log4Moz.DumpAppender();
-+  dapp.level = Log4Moz.Level["All"];
-+  this._log.addAppender(dapp);
-+  this._log.info("Loading AitC");
-+
-+  let self = this;
-+  this._manager = new AitcManager(function _managerDone() {
-+    self._init();
-+  });
-+}
-+Aitc.prototype = {
-+  get DASHBOARD() {
-+    return Preferences.get("services.aitc.dashboard.url");
-+  },
-+
-+  // The goal of the init function is to be ready to activate the AITC
-+  // client whenever the user is looking at the dashboard.
-+  _init: function init() {
-+    let self = this;
-+
-+    // This is called iff the user is currently looking the dashboard.
-+    function dashboardLoaded(browser) {
-+      self._log.info("Dashboard was accessed " + browser.contentWindow);
-+      self._manager.userOnDashboard(browser.contentWindow);
-+    }
-+    // This is called when the user's attention is elsewhere.
-+    function dashboardUnloaded() {
-+      self._log.info("Dashboard closed or in background");
-+      self._manager.userOffDashboard();
-+    }
-+
-+    // Called when a URI is loaded in any tab. We have to listen for this
-+    // because tabSelected is not called if I open a new tab which loads
-+    // about:home and then navigate to the dashboard, or navigation via
-+    // links on the currently open tab.
-+    let listener = {
-+      onLocationChange: function onLocationChange(browser, pr, req, loc, flag) {
-+        let win = Services.wm.getMostRecentWindow("navigator:browser");
-+        if (win.gBrowser.selectedBrowser == browser) {
-+          let uri = loc.spec.substring(0, self.DASHBOARD.length);
-+          if (uri == self.DASHBOARD) {
-+            dashboardLoaded(browser);
-+          }
-+        }
-+      }
-+    };
-+    // Called when the current tab selection changes.
-+    function tabSelected(event) {
-+      let browser = event.target.linkedBrowser;
-+      let uri = browser.currentURI.spec.substring(0, self.DASHBOARD.length);
-+      if (uri == self.DASHBOARD) {
-+        dashboardLoaded(browser);
-+      } else {
-+        dashboardUnloaded();
-+      }
-+    }
-+
-+    // Add listeners for all windows opened in the future.
-+    function winWatcher(subject, topic) {
-+      if (topic != "domwindowopened") return;
-+      subject.addEventListener("load", function winWatcherLoad() {
-+        subject.removeEventListener("load", winWatcherLoad, false);
-+        let doc = subject.document.documentElement;
-+        if (doc.getAttribute("windowtype") == "navigator:browser") {
-+          let browser = subject.gBrowser;
-+          browser.addTabsProgressListener(listener);
-+          browser.tabContainer.addEventListener("TabSelect", tabSelected);
-+        }
-+      }, false);
-+    }
-+    Services.ww.registerNotification(winWatcher);
-+
-+    // Add listeners for all current open windows.
-+    let enumerator = Services.wm.getEnumerator("navigator:browser");
-+    while (enumerator.hasMoreElements()) {
-+      let browser = enumerator.getNext().gBrowser;
-+      browser.addTabsProgressListener(listener);
-+      browser.tabContainer.addEventListener("TabSelect", tabSelected);
-+
-+      // Also check the currently open URI.
-+      let uri = browser.contentDocument.location.toString().substring(
-+        0, self.DASHBOARD.length
-+      );
-+      if (uri == self.DASHBOARD) {
-+        dashboardLoaded(browser);
-+      }
-+    }
-+
-+    // Add listeners for app installs/uninstall.
-+    Services.obs.addObserver(this, "webapps-sync-install", false);
-+    Services.obs.addObserver(this, "webapps-sync-uninstall", false);
-+  },
-+
-+  observe: function(aSubject, aTopic, aData) {
-+    let app;
-+    switch (aTopic) {
-+      case "webapps-sync-install":
-+        app = JSON.parse(aData);
-+        this._log.info(app.origin + " was installed, initiating PUT");
-+        this._manager.appEvent("install", app);
-+        break;
-+      case "webapps-sync-uninstall":
-+        app = JSON.parse(aData);
-+        this._log.info(app.origin + " was uninstalled, initiating PUT");
-+        this._manager.appEvent("uninstall", app);
-+        break;
-+    }
-+  }
-+};
-\ No newline at end of file
-diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
-new file mode 100644
---- /dev/null
-+++ b/services/aitc/modules/manager.js
-@@ -0,0 +1,434 @@
-+/* This Source Code Form is subject to the terms of the Mozilla Public
-+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
-+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
-+
-+"use strict";
-+
-+const EXPORTED_SYMBOLS = ["AitcManager"];
-+
-+const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
-+
-+Cu.import("resource://gre/modules/Webapps.jsm");
-+Cu.import("resource://gre/modules/Services.jsm");
-+Cu.import("resource://gre/modules/FileUtils.jsm");
-+Cu.import("resource://gre/modules/identity/browserid.js");
-+
-+Cu.import("resource://services-aitc/client.js");
-+Cu.import("resource://services-aitc/storage.js");
-+Cu.import("resource://services-common/log4moz.js");
-+Cu.import("resource://services-common/preferences.js");
-+Cu.import("resource://services-common/tokenserverclient.js");
-+Cu.import("resource://services-common/utils.js");
-+
-+const PREFS = new Preferences("services.aitc.");
-+
-+/**
-+ * The constructor for the manager takes a callback, which will be invoked when
-+ * the manager is ready (construction is asynchronous). *DO NOT* call any
-+ * methods on this object until the callback has been invoked, doing so will
-+ * lead to undefined behaviour.
-+ */
-+function AitcManager(cb) {
-+  this._client = null;
-+  this._getTimer = null;
-+  this._putTimer = null;
-+
-+  this._log = Log4Moz.repository.getLogger("Service.AITC.Manager");
-+  //this._log.level = Log4Moz.Level[Preferences.get("manager.log.level")];
-+  this._log.info("Loading AitC manager module");
-+
-+  // Check if we have pending PUTs from last time.
-+  let self = this;
-+  this._pending = new AitcQueue("webapps-pending.json", function _queueDone() {
-+    // Inform the AitC service that we're good to go!
-+    self._log.info("AitC manager has finished loading");
-+    cb(true);
-+
-+    // Schedule them, but only if we can get a silent assertion.
-+    self._makeClient(function(err, client) {
-+      if (!err && client) {
-+        self._client = client;
-+        self._processQueue();
-+      }
-+    }, false);
-+  });
-+}
-+AitcManager.prototype = {
-+  get MARKETPLACE() {
-+    return PREFS.get("marketplace.url");
-+  },
-+
-+  get DASHBOARD() {
-+    return PREFS.get("dashboard.url");
-+  },
-+
-+  get TOKEN_SERVER() {
-+    return PREFS.get("tokenServer.url");
-+  },
-+
-+  /**
-+   * Local app was just installed or uninstalled, ask client to PUT if user
-+   * is logged in.
-+   */
-+  appEvent: function appEvent(type, app) {
-+    // Add this to the equeue.
-+    let self = this;
-+    let obj = {type: type, app: app, retries: 0, lastTime: 0};
-+    this._pending.enqueue(obj, function _enqueued(err, rec) {
-+      if (err) {
-+        self._log.error("Could not add " + type + " " + app + " to queue");
-+        return;
-+      }
-+
-+      // If we already have a client (i.e. user is logged in), attempt to PUT.
-+      if (self._client) {
-+        self._processQueue();
-+        return;
-+      }
-+
-+      // If not, try a silent client creation.
-+      self._makeClient(function(err, client) {
-+        if (!err && client) {
-+          self._client = client;
-+          self._processQueue();
-+        }
-+        // If user is not logged in, we'll just have to try later.
-+      });
-+    });
-+  },
-+
-+  /**
-+   * User is looking at dashboard. Start polling, but if user isn't logged in,
-+   * prompt for them to login via a dialog.
-+   */
-+  userOnDashboard: function userOnDashboard(win) {
-+    if (this._client) {
-+      this._startPoll();
-+      return;
-+    }
-+
-+    // Make client will first try silent login, if it doesn't work, a popup
-+    // will be shown in the context of the dashboard.
-+    let self = this;
-+    this._makeClient(function(err, client) {
-+      if (err) {
-+        // XXX: Surface this error the user, somehow?
-+        self._log.error("Client not created at Dashboard");
-+        return;
-+      }
-+      self._client = client;
-+      self._startPoll();
-+    }, true, win);
-+  },
-+
-+  /**
-+   * User is not on the dashboard, we may stop polling (though PUTs will
-+   * still continue to be tried).
-+   */
-+  userOffDashboard: function userOffDashboard() {
-+    if (this._client) {
-+      this._stopPoll();
-+      return;
-+    }
-+  },
-+
-+  /**
-+   * Poll the AITC server for any changes and process them. Call this whenever
-+   * the user is actively looking at the apps dashboard. It is safe to call
-+   * this function multiple times.
-+   */
-+  _startPoll: function _startPoll() {
-+    if (!this._client) {
-+      throw new Error("_startPoll called without client");
-+    }
-+    if (this._getTimer) {
-+      return;
-+    }
-+
-+    // Check if there are any PUTs pending first.
-+    if (this._pending.length() && !(this._putTimer)) {
-+      // There are pending PUTs and no timer, so let's process them.
-+      this._processQueue();
-+    } else {
-+      // Do one GET soon.
-+      CommonUtils.nextTick(this._checkServer, this);
-+    }
-+
-+    // Start the timer for GETs. In case there were pending PUTs, _checkServer
-+    // will automatically abort, and we'll retry after getFreq.
-+    let self = this;
-+    let getFreq = PREFS.get("manager.getFreq");
-+    this._log.info("Starting GET timer");
-+    this._getTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
-+    this._getTimer.initWithCallback(
-+      {
-+        notify: function _getTimerNotify() {
-+          self._checkServer();
-+        },
-+      }, getFreq, Ci.nsITimer.TYPE_REPEATING_SLACK
-+    );
-+    this._log.info("GET timer set, next attempt in " + getFreq + "ms");
-+  },
-+
-+  /**
-+   * Stop polling for changes. Call this as soon as the user
-+   * isn't looking at the apps dashboard anymore. It is safe to call
-+   * this function even if runPeriodically() wasn't called before.
-+   */
-+  _stopPoll: function _stopPoll() {
-+    if (!this._getTimer) {
-+      return;
-+    }
-+    this._getTimer.cancel();
-+    this._getTimer = null;
-+  },
-+
-+  /**
-+   * Do a GET check on the server to see if we have any new apps. Abort if
-+   * there are pending PUTs. If we GET some apps, send to storage for
-+   * further processing.
-+   */
-+  _checkServer: function _checkServer() {
-+    if (!this._client) {
-+      throw new Error("_checkServer called without a client");
-+    }
-+
-+    if (this._pending.length()) {
-+      this._log.warn("_checkServer aborted because of pending PUTs");
-+      return;
-+    }
-+
-+    // Do a GET
-+    let self = this;
-+    this._log.info("Attempting to getApps");
-+    this._client.getApps(function gotApps(err, apps) {
-+      if (err) {
-+        // Error was logged in client.
-+        return;
-+      }
-+      if (!apps) {
-+        // No changes, got 304.
-+        return;
-+      }
-+      if (!apps.length) {
-+        // Empty array, nothing to process
-+        self._log.info("No apps found on remote server");
-+        return;
-+      }
-+
-+      // Send list of remote apps to storage to apply locally
-+      AitcStorage.processApps(apps, function processedApps() {
-+        self._log.info("processApps completed successfully, changes applied");
-+      });
-+    });
-+  },
-+
-+  /**
-+   * Go through list of apps to PUT and attempt each one. If we fail, try
-+   * again in PUT_FREQ.
-+   */
-+  _processQueue: function _processPutQueue() {
-+    if (!this._client) {
-+      throw new Error("_processQueue called without a client");
-+    }
-+
-+    if (!this._pending.length()) {
-+      this._log.info("There are no pending items, _processQueue closing");
-+      if (this._putTimer) {
-+        this._putTimer.clear();
-+      }
-+      return;
-+    }
-+
-+    if (this._putInProgress) {
-+      // The network request sent out as a result to the last call to
-+      // _processPutQueue still isn't done. A timer is created they all
-+      // finish to make sure this function is called again if neccessary.
-+      return;
-+    }
-+
-+    let self = this;
-+    this._putInProgress = true;
-+    let record = this._pending.peek();
-+
-+    this._log.info("Processing record type " + record.type);
-+    function _clientCallback(err, done) {
-+      // Send to end of queue if unsuccessful or err.removeFromQueue is false.
-+      if (err && !err.removeFromQueue) {
-+        self._log.info("PUT failed, re-adding to queue");
-+
-+        // Update retries and time
-+        record.retries += 1;
-+        record.lastTime = new Date().getTime();
-+
-+        // Add updated record to the end of the queue.
-+        self._pending.enqueue(record, function(err, done) {
-+          if (err) {
-+            self._log.error("Enqueue failed " + err);
-+            _reschedule();
-+            return;
-+          }
-+          // If record was successfully added, remove old record.
-+          self._pending.dequeue(function(err, done) {
-+            if (err) {
-+              self._log.error("Dequeue failed " + err);
-+            }
-+            _reschedule();
-+            return;
-+          });
-+        });
-+      }
-+
-+      // If succeeded or client told us to remove from queue
-+      self._log.info("_putApp asked us to remove it from queue");
-+      self._pending.dequeue(function(err, done) {
-+        if (err) {
-+          self._log.error("Dequeue failed " + e);
-+        }
-+        _reschedule();
-+      });
-+    }
-+
-+    function _reschedule() {
-+      // Release PUT lock
-+      self._putInProgress = false;
-+
-+      // We just finished PUTting an object, try the next one immediately,
-+      // but only if haven't tried it already in the last putFreq (ms).
-+      if (!self._pending.length()) {
-+        return;
-+      }
-+
-+      let obj = self._pending.peek();
-+      let cTime = new Date().getTime();
-+      let freq = PREFS.get("manager.putFreq");
-+
-+      // We tried this object recently, we'll come back to it later.
-+      if (obj.lastTime && ((cTime - obj.lastTime) < freq)) {
-+        self._log.info("Scheduling next processQueue in " + freq);
-+        CommonUtils.namedTimer(self._processQueue, freq, self, "_putTimer");
-+        return;
-+      }
-+
-+      // Haven't tried this PUT yet, do it immediately.
-+      self._log.info("Queue non-empty, processing next PUT");
-+      self._processQueue();
-+    }
-+
-+    switch (record.type) {
-+      case "install":
-+        this._client.remoteInstall(record.app, _clientCallback);
-+        break;
-+      case "uninstall":
-+        record.app.deleted = true;
-+        this._client.remoteUninstall(record.app, _clientCallback);
-+        break;
-+      default:
-+        this._log.warn(
-+          "Unrecognized type " + record.type + " in queue, removing"
-+        );
-+        let self = this;
-+        this._pending.dequeue(function _dequeued(err) {
-+          if (err) {
-+            self._log.error("Dequeue of unrecognized app type failed");
-+          }
-+          _reschedule();
-+        });
-+    }
-+  },
-+
-+  /* Obtain a token from Sagrada token server, given a BrowserID assertion
-+   * cb(err, token) will be invoked on success or failure.
-+   */
-+  _getToken: function _getToken(assertion, cb) {
-+    let url = this.TOKEN_SERVER + "/1.0/aitc/1.0";
-+    let client = new TokenServerClient();
-+
-+    let self = this;
-+    this._log.info("Obtaining token from " + url);
-+    client.getTokenFromBrowserIDAssertion(url, assertion, function(err, tok) {
-+      if (!err) {
-+        self._log.info("Got token from server: " + JSON.stringify(tok));
-+        cb(null, tok);
-+        return;
-+      }
-+
-+      if (!err.response) {
-+        self._log.error(err);
-+        cb(err, null);
-+        return;
-+      }
-+      if (!err.response.success) {
-+        self._log.error(err);
-+        cb(err, null);
-+        return;
-+      }
-+
-+      let msg = "Unknown error in _getToken " + err.message;
-+      self._log.error(msg);
-+      cb(new Error(msg), null);
-+    });
-+  },
-+
-+  /* To start the AitcClient we need a token, for which we need a BrowserID
-+   * assertion. If login is true, makeClient will ask the user to login in
-+   * the context of win. cb is called with (err, client).
-+   */
-+  _makeClient: function makeClient(cb, login, win) {
-+    if (!cb) {
-+      throw new Error("makeClient called without callback");
-+    }
-+    if (login && !win) {
-+      throw new Error("makeClient called with login as true but no win");
-+    }
-+
-+    if (this._client) {
-+      let msg = "Client already exists, not creating";
-+      self._log.info(msg);
-+      cb(new Error(msg), null);
-+      return;
-+    }
-+
-+    let self = this;
-+    let ctxWin = win;
-+    function processAssertion(val) {
-+      self._log.info("Got assertion from BrowserID, creating token");
-+      self._getToken(val, function(err, token) {
-+        if (err) {
-+          cb(err, null);
-+          return;
-+        }
-+        cb(null, new AitcClient(token));
-+      });
-+    }
-+    function gotSilentAssertion(err, val) {
-+      self._log.info("gotSilentAssertion called");
-+      if (err) {
-+        // If we were asked to let the user login, do the popup method.
-+        if (login) {
-+          self._log.info("Could not obtain silent assertion, retrying login");
-+          BrowserID.getAssertionWithLogin(function gotAssertion(err, val) {
-+            if (err) {
-+              self._log.error(err);
-+              cb(err, false);
-+              return;
-+            }
-+            processAssertion(val);
-+          }, {}, ctxWin);
-+          return;
-+        }
-+        self._log.warn("Could not obtain assertion in _makeClient");
-+        cb(err, false);
-+      } else {
-+        processAssertion(val);
-+      }
-+    }
-+
-+    // Check if we can get assertion silently first
-+    self._log.info("Attempting to obtain assertion silently")
-+    BrowserID.getAssertion(gotSilentAssertion, {
-+      audience: this.DASHBOARD, sameEmailAs: this.MARKETPLACE
-+    });
-+  },
-+
-+};
-diff --git a/services/aitc/modules/storage.js b/services/aitc/modules/storage.js
-new file mode 100644
---- /dev/null
-+++ b/services/aitc/modules/storage.js
-@@ -0,0 +1,390 @@
-+/* This Source Code Form is subject to the terms of the Mozilla Public
-+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
-+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
-+
-+"use strict";
-+
-+const EXPORTED_SYMBOLS = ["AitcStorage", "AitcQueue"];
-+
-+const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
-+
-+Cu.import("resource://gre/modules/NetUtil.jsm");
-+Cu.import("resource://gre/modules/Webapps.jsm");
-+Cu.import("resource://gre/modules/FileUtils.jsm");
-+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-+
-+Cu.import("resource://services-common/rest.js");
-+Cu.import("resource://services-common/log4moz.js");
-+Cu.import("resource://services-common/preferences.js");
-+
-+/**
-+ * Provides a file-backed queue. Currently used by manager.js as persistent
-+ * storage to manage pending installs and uninstalls.
-+ *
-+ * @param filename     
-+ *        (String)    The file backing this queue will be named as this string.
-+ *
-+ * @param cb          
-+ *        (Function)  This function will be called when the queue is ready to
-+ *                    use. *DO NOT* call any methods on this object until the
-+ *                    callback is invoked, if you do so, none of your operations
-+ *                    will be persisted on disk.
-+ *
-+ */
-+function AitcQueue(filename, cb) {
-+  this._log = Log4Moz.repository.getLogger("Service.AITC.Storage.Queue");
-+  /*this._log.level = Log4Moz.Level[Preferences.get(
-+    "services.aitc.storage.log.level"
-+  )];*/
-+
-+  this._queue = [];
-+  this._writeLock = false;
-+  this._file = FileUtils.getFile("ProfD", ["webapps", filename], true);
-+
-+  this._log.info("AitcQueue instance loading");
-+
-+  let self = this;
-+  if (this._file.exists()) {
-+    this._getFile(function _gotFile(data) {
-+      if (data) {
-+        self._queue = data;
-+      }
-+      self._log.info("AitcQueue instance created");
-+      cb(true);
-+    });
-+  } else {
-+    self._log.info("AitcQueue instance created");
-+    cb(true);
-+  }
-+}
-+AitcQueue.prototype = {
-+  /**
-+   * Add an object to the queue.
-+   */
-+  enqueue: function enqueue(obj, cb) {
-+    this._log.info("Adding to queue " + obj);
-+
-+    if (!cb) {
-+      throw new Error("enqueue called without callback");
-+    }
-+
-+    let self = this;
-+    this._queue.push(obj);
-+    this._putFile(this._queue, function _enqueuePutFile(err) {
-+      if (!err) {
-+        // Successful write.
-+        cb(null, true);
-+        return;
-+      }
-+      // Write unsuccessful, don't add to queue.
-+      self._queue.pop();
-+      cb(new Error(err), false);
-+    });
-+  },
-+
-+  /**
-+   * Remove the object at the head of the queue.
-+   */
-+  dequeue: function dequeue(cb) {
-+    this._log.info("Removing head of queue");
-+
-+    if (!cb) {
-+      throw new Error("dequeue called without callback");
-+    }
-+    if (!this._queue.length) {
-+      throw new Error("Queue is empty");
-+    }
-+
-+    let self = this;
-+    let obj = this._queue.shift();
-+    this._putFile(this._queue, function _dequeuePutFile(err) {
-+      if (!err) {
-+        // Successful write.
-+        cb(null, true);
-+        return;
-+      }
-+      // Unsuccessful write, put back in queue.
-+      self._queue.unshift(obj);
-+      cb(err, false);
-+    });
-+  },
-+
-+  /**
-+   * Return the object at the front of the queue without removing it.
-+   */
-+  peek: function peek(cb) {
-+    if (!this._queue.length) {
-+      throw new Error("Queue is empty");
-+    }
-+    this._log.info("Peek returning head of queue");
-+    return this._queue[0];
-+  },
-+
-+  /**
-+   * Find out the length of the queue.
-+   */
-+  length: function length(cb) {
-+    return this._queue.length;
-+  },
-+
-+  /**
-+   * Get contents of cache file and parse it into an array. Will throw an
-+   * exception if there is an error while reading the file.
-+   */
-+  _getFile: function _getFile(cb) {
-+    let channel = NetUtil.newChannel(this._file);
-+    channel.contentType = "application/json";
-+
-+    let self = this;
-+    NetUtil.asyncFetch(channel, function _asyncFetched(stream, res) {
-+      if (!Components.isSuccessCode(res)) {
-+        self._log.error("Could not read from json file " + this._file.path);
-+        cb(null);
-+        return;
-+      }
-+
-+      let data = [];
-+      try {
-+        data = JSON.parse(
-+          NetUtil.readInputStreamToString(stream, stream.available())
-+        );
-+        stream.close();
-+        cb(data);
-+      } catch (e) {
-+        self._log.error("Could not parse JSON " + e);
-+        cb(null);
-+      }
-+    });
-+  },
-+
-+  /**
-+   * Put an array into the cache file. Will throw an exception if there is
-+   * an error while trying to write to the file.
-+   */
-+  _putFile: function _putFile(value, cb) {
-+    if (this._writeLock) {
-+      throw new Error("_putFile already in progress");
-+    }
-+
-+    this._writeLock = true;
-+    try {
-+      let ostream = FileUtils.openSafeFileOutputStream(this._file);
-+
-+      let converter = Cc["@mozilla.org/intl/scriptableunicodeconverter"].
-+                      createInstance(Ci.nsIScriptableUnicodeConverter);
-+      converter.charset = "UTF-8";
-+      let istream = converter.convertToInputStream(JSON.stringify(value));
-+
-+      // Asynchronously copy the data to the file.
-+      let self = this;
-+      this._log.info("Writing queue to disk");
-+      NetUtil.asyncCopy(istream, ostream, function _asyncCopied(result) {
-+        self._writeLock = false;
-+        if (Components.isSuccessCode(result)) {
-+          self._log.info("asyncCopy succeeded");
-+          cb(null);
-+        } else {
-+          let msg = "asyncCopy failed with " + result;
-+          self._log.info(msg);
-+          cb(msg);
-+        }
-+      });
-+    } catch (e) {
-+      this._writeLock = false;
-+      cb(msg);
-+    }
-+  },
-+};
-+
-+/**
-+ * An interface to DOMApplicationRegistry, used by manager.js to process
-+ * remote changes received and apply them to the local registry.
-+ */
-+function AitcStorageImpl() {
-+  this._log = Log4Moz.repository.getLogger("Service.AITC.Storage");
-+  /*this._log.level = Log4Moz.Level[Preferences.get(
-+    "services.aitc.storage.log.level"
-+  )];*/
-+  this._log.info("Loading AitC storage module");
-+
-+  this._file = FileUtils.getFile(
-+    "ProfD", ["webapps", "webapps-pending.json"], true
-+  );
-+}
-+AitcStorageImpl.prototype = {
-+  /**
-+   * Determines what changes are to be made locally, given a list of
-+   * remote apps.
-+   *
-+   * @param remoteApps
-+   *        (Array)     An array of app records fetched from the AITC server.
-+   *
-+   * @param callback
-+   *        (function)  A callback to be invoked when processing is finished.
-+   */
-+  processApps: function processApps(remoteApps, callback) {
-+    let self = this;
-+    this._log.info("Server check got " + remoteApps.length + " apps");
-+
-+    // Get the set of local apps, and then pass to _processApps.
-+    // _processApps will check for the validity of remoteApps.
-+    DOMApplicationRegistry.getAllWithoutManifests(
-+      function _processAppsGotLocalApps(localApps) {
-+        self._processApps(remoteApps, localApps, callback);
-+      }
-+    );
-+  },
-+
-+  /**
-+   * Take a list of remote and local apps and figured out what changes (if any)
-+   * are to be made to the local DOMApplicationRegistry.
-+   */
-+  _processApps: function _processApps(remoteApps, lApps, callback) {
-+    let toDelete = {};
-+    let localApps = {};
-+    
-+    // Convert lApps to a dictionary of origin -> app (instead of id -> app).
-+    for (let [id, app] in Iterator(localApps)) {
-+      app.id = id;
-+      toDelete[app.origin] = app;
-+      localApps[app.origin] = app;
-+    }
-+
-+    // Iterate over remote apps, and find out what changes we must apply.
-+    let toInstall = [];
-+    for each (let app in remoteApps) {
-+      // Don't delete apps that are both local & remote.
-+      let origin = app.origin;
-+      delete toDelete[origin];
-+
-+      // If there is a remote app that isn't local or 
-+      // if the remote app was installed later.
-+      let id = null;
-+      if (!localApps[origin]) {
-+        id = DOMApplicationRegistry.makeAppId();
-+      }
-+      if (localApps[origin] &&
-+          (localApps[origin].installTime < app.installTime)) {
-+        id = localApps[origin].id;
-+      }
-+      
-+      // We should (re)install this app locally
-+      if (id) {
-+        try {          
-+          let record = {id: id, value: app};
-+          toInstall.push(record);
-+        } catch (e) {
-+          // App was an invalid record
-+          this._log.error("A remote app was found to be invalid " + e);
-+        }
-+      }
-+    }
-+
-+    // Uninstalls only need the ID & deleted flag.
-+    let toUninstall = [];
-+    for (let origin in toDelete) {
-+      toUninstall.push({id: toDelete[origin].id, deleted: true});
-+    }
-+
-+    // Apply installs & uninstalls.
-+    this._applyUpdates(toInstall, toUninstall, callback);
-+    return;
-+  },
-+
-+  /**
-+   * Applies a list of commands as determined by processApps locally.
-+   */
-+  _applyUpdates: function _applyUpdates(toInstall, toUninstall, callback) {
-+    let finalCommands = [];
-+    let toUpdate = toInstall.length;
-+
-+    let self = this;
-+    function onManifestsUpdated() {
-+      if (toUninstall.length) {
-+        finalCommands.push(toUninstall);
-+      }
-+      if (finalCommands.length) {
-+        self._log.info(
-+          "processUpdates finished fetching manifests, calling updateApps"
-+        );
-+        DOMApplicationRegistry.updateApps(finalCommands, callback);
-+      } else {
-+        self._log.info(
-+          "processUpdates finished fetching, no finalCommands were found"
-+        );
-+        callback();
-+      }
-+    }
-+
-+    // Update manifests for all the new remote apps we have.
-+    let done = 0;
-+    for (let j = 0; j < toUpdate; j++) {
-+      let app = toInstall[j];
-+      let url = app.value.manifestURL;
-+      if (url[0] == "/") {
-+        url = app.value.origin + app.value.manifestURL;
-+      }
-+
-+      this._log.info("Updating manifest " + url + "\n");
-+      this._getManifest(url, function(err, manifest) {
-+        if (!err) {
-+          app.value.manifest = manifest;
-+          finalCommands.push(app);
-+          self._log.info(app.id + " was added to finalCommands");
-+        } else {
-+          self._log.debug("Couldn't fetch manifest at " + url + ": " + err);
-+        }
-+
-+        // Not a big deal if we couldn't get a manifest, we will try to fetch
-+        // it again in the next cycle. Carry on.
-+        done += 1;
-+        if (done == toUpdate) {
-+          onManifestsUpdated();
-+        }
-+      });
-+    }
-+  },
-+
-+  /**
-+   * Fetch a manifest from given URL. No retries are made on failure.
-+   */
-+  _getManifest: function _getManifest(url, callback)  {
-+    let req = new RESTRequest(url);
-+    req.get(function(error) {
-+      if (error) {
-+        callback(error, null);
-+        return;
-+      }
-+      if (!req.response.success) {
-+        callback(new Error("Non-200 while fetching manifest"), null);
-+        return;
-+      }
-+
-+      let err = null;
-+      let manifest = null;
-+      try {
-+        manifest = JSON.parse(req.response.body);
-+        if (!manifest.name) {
-+          self._log.warn(
-+            "_getManifest got invalid manifest: " + req.response.body
-+          );
-+          err = new Error("Invalid manifest fetched");
-+          manifest = null;
-+        }
-+      } catch (e) {
-+        self._log.warn(
-+          "_getManifest got invalid JSON response: " + req.response.body
-+        );
-+        err = new Error("Invalid manifest fetched");
-+        manifest = null;
-+      }
-+
-+      callback(err, manifest);
-+    });
-+  },
-+
-+};
-+
-+XPCOMUtils.defineLazyGetter(this, "AitcStorage", function() {
-+  return new AitcStorageImpl();
-+});
 \ No newline at end of file
 diff --git a/services/aitc/service.js b/services/aitc/service.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/service.js
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,46 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -1383,9 +434,7 @@ new file mode 100644
 +        }
 +
 +        CommonUtils.namedTimer(function() {
-+          // Kick-off!
-+          Cu.import("resource://services-aitc/main.js");
-+          new Aitc();
++          // Kick-off later!
 +        }, 2000, this, "timer");
 +        break;
 +    }
@@ -1394,28 +443,12 @@ new file mode 100644
 +
 +const components = [AitcService];
 +const NSGetFactory = XPCOMUtils.generateNSGetFactory(components);
-\ No newline at end of file
 diff --git a/services/aitc/services-aitc.js b/services/aitc/services-aitc.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/services-aitc.js
-@@ -0,0 +1,16 @@
-+pref("dom.mozApps.whitelist", "https://myapps.mozillalabs.com");
-+
-+pref("services.aitc.dashboard.url", "https://myapps.mozillalabs.com");
-+pref("services.aitc.marketplace.url", "https://marketplace.mozilla.org");
-+//pref("services.aitc.tokenServer.url", "http://dev-token.services.mozilla.com");
-+//pref("services.aitc.tokenServer.url", "http://token2.reg.mtv1.dev.svc.mozilla.com");
-+pref("services.aitc.tokenServer.url", "https://stage-token.services.mozilla.com");
-+//pref("services.aitc.tokenServer.url", "https://token.services.mozilla.com");
-+
-+pref("services.aitc.manager.putFreq", 5000);
-+pref("services.aitc.manager.getFreq", 30000);
-+
+@@ -0,0 +1,1 @@
 +pref("services.aitc.client.log.level", "Debug");
-+pref("services.aitc.manager.log.level", "Debug");
-+pref("services.aitc.service.log.level", "Debug");
-+pref("services.aitc.storage.log.level", "Debug");
 diff --git a/services/aitc/tests/Makefile.in b/services/aitc/tests/Makefile.in
 new file mode 100644
 --- /dev/null
@@ -1437,19 +470,75 @@ new file mode 100644
 +XPCSHELL_TESTS = unit
 +
 +include $(topsrcdir)/config/rules.mk
+diff --git a/services/aitc/tests/unit/head_global.js b/services/aitc/tests/unit/head_global.js
+new file mode 100644
+--- /dev/null
++++ b/services/aitc/tests/unit/head_global.js
+@@ -0,0 +1,52 @@
++/* Any copyright is dedicated to the Public Domain.
++ * http://creativecommons.org/publicdomain/zero/1.0/ */
++
++// This has the side-effect of populating Cc, Ci, Cu, Cr. It's best not to
++// ask questions and just accept it.
++do_load_httpd_js();
++const Cm = Components.manager;
++
++let gSyncProfile = do_get_profile();
++
++Cu.import("resource://gre/modules/XPCOMUtils.jsm");
++
++let XULAppInfo = {
++  vendor: "Mozilla",
++  name: "XPCShell",
++  ID: "xpcshell@tests.mozilla.org",
++  version: "1",
++  appBuildID: "20100621",
++  platformVersion: "",
++  platformBuildID: "20100621",
++  inSafeMode: false,
++  logConsoleErrors: true,
++  OS: "XPCShell",
++  XPCOMABI: "noarch-spidermonkey",
++  QueryInterface: XPCOMUtils.generateQI([Ci.nsIXULAppInfo, Ci.nsIXULRuntime]),
++  invalidateCachesOnRestart: function invalidateCachesOnRestart() { }
++};
++
++let XULAppInfoFactory = {
++  createInstance: function (outer, iid) {
++    if (outer != null)
++      throw Cr.NS_ERROR_NO_AGGREGATION;
++    return XULAppInfo.QueryInterface(iid);
++  }
++};
++
++let registrar = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
++registrar.registerFactory(Components.ID("{fbfae60b-64a4-44ef-a911-08ceb70b9f31}"),
++                          "XULAppInfo", "@mozilla.org/xre/app-info;1",
++                          XULAppInfoFactory);
++
++function addResourceAlias() {
++  Cu.import("resource://gre/modules/Services.jsm");
++  const handler = Services.io.getProtocolHandler("resource")
++                  .QueryInterface(Ci.nsIResProtocolHandler);
++
++  
++  let uri = Services.io.newURI("resource:///modules/services-aitc/",
++                               null, null);
++  handler.setSubstitution("services-aitc", uri);
++}
++addResourceAlias();
+\ No newline at end of file
 diff --git a/services/aitc/tests/unit/test_load_modules.js b/services/aitc/tests/unit/test_load_modules.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/tests/unit/test_load_modules.js
-@@ -0,0 +1,11 @@
+@@ -0,0 +1,9 @@
 +const modules = [
-+  "main.js",
-+  "client.js",
++  "client.js"
 +];
 +
 +function run_test() {
 +  for each (let m in modules) {
-+    _("Attempting to load resource://services-aitc/" + m);
 +    Cu.import("resource://services-aitc/" + m, {});
 +  }
 +}
@@ -1459,7 +548,7 @@ new file mode 100644
 +++ b/services/aitc/tests/unit/xpcshell.ini
 @@ -0,0 +1,6 @@
 +[DEFAULT]
-+head =
++head = head_global.js
 +tail =
 +
 +# Ensure we can import everything.
