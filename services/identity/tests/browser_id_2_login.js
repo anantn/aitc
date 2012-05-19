@@ -9,7 +9,7 @@
  */
 function test() {
   loadURL(marketplace + "/en-US/login", function() {
-    BrowserID.getAssertionWithLogin(gotassertion, {}, gBrowser.contentWindow);
+    BrowserID.getAssertionWithLogin(gotassertion, gBrowser.contentWindow);
     // Wait a couple of seconds for the BrowserID popup to appear.
     setTimeout(signin, 2000);
   });

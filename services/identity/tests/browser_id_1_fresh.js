@@ -9,7 +9,7 @@
  */
 function test() {
   ok(BrowserID, "BrowserID exists");
-
+ 
   try {
     BrowserID.getAssertion();
   } catch (e) {

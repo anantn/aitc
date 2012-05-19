@@ -14,17 +14,23 @@ Cu.import("resource://services-common/log4moz.js");
 Cu.import("resource://services-common/preferences.js");
 
 const PREFS = new Preferences("identity.browserid.");
-const ID_URI = PREFS.get("url");
 
 /**
- * This object must be refactored into an XPCOM service at some point.
- * Bug 746398
+ * This implementation will be replaced with native crypto and assertion
+ * generation goodness. See bug 753238. 
  */
 function BrowserIDService() {
   this._log = Log4Moz.repository.getLogger("Identity.BrowserID");
   this._log.level = Log4Moz.Level[PREFS.get("log")];
 }
 BrowserIDService.prototype = {
+  /**
+   * Getter that returns the freshest value for ID_URI.
+   */
+  get ID_URI() {
+    return PREFS.get("url");
+  },
+
   /**
    * Obtain a BrowserID assertion with the specified characteristics.
    *
@@ -77,10 +83,7 @@ BrowserIDService.prototype = {
       );
     }
 
-    let self = this;
-    new BrowserIDSandbox(function _gotSandbox(obj) {
-      self._getEmails(obj, cb, options);
-    });
+    new Sandbox(this._getEmails.bind(this, cb, options), this.ID_URI);
   },
 
   /**
@@ -92,11 +95,6 @@ BrowserIDService.prototype = {
    *        can be an Error or NULL, and 'assertion' can be NULL or a valid
    *        BrowserID assertion. If no callback is provided, an exception is
    *        thrown.
-   *
-   * @param options
-   *        (Object) Currently an empty object. Present for future compatiblity
-   *        when options for a login case may be added. Any properties, if
-   *        present, are ignored.
    *
    * @param win
    *        (Window) A contentWindow that has a valid document loaded. If this
@@ -113,8 +111,13 @@ BrowserIDService.prototype = {
    *        Be aware! The provided contentWindow must also have loaded the
    *        BrowserID include.js shim for this to work! This behavior is
    *        temporary until we implement native support for navigator.id.
+   *
+   * @param options
+   *        (Object) Currently an empty object. Present for future compatiblity
+   *        when options for a login case may be added. Any properties, if
+   *        present, are ignored.
    */
-  getAssertionWithLogin: function getAssertionWithLogin(cb, options, win) {
+  getAssertionWithLogin: function getAssertionWithLogin(cb, win, options) {
     if (!cb) {
       throw new Error("getAssertionWithLogin called without a callback");
     }
@@ -124,9 +127,15 @@ BrowserIDService.prototype = {
     this._getAssertionWithLogin(cb, win);
   },
 
+
+  /**
+   * Internal implementation methods begin here
+   */
+
   // Try to get the user's email(s). If user isn't logged in, this will be empty
-  _getEmails: function _getEmails(obj, cb, options) {
+  _getEmails: function _getEmails(cb, options, sandbox) {
     let self = this;
+
     function callback(res) {
       let emails = {};
       try {
@@ -134,24 +143,31 @@ BrowserIDService.prototype = {
       } catch (e) {
         self._log.error("Exception in JSON.parse for _getAssertion: " + e);
       }
-      self._gotEmails(emails, obj, cb, options);
+      self._gotEmails(emails, sandbox, cb, options);
     }
-    obj.sandbox.importFunction(callback, "callback");
+    sandbox.box.importFunction(callback);
+    
     let scriptText = 
       "var list = window.BrowserID.User.getStoredEmailKeypairs();" + 
       "callback(JSON.stringify(list));";
-    Cu.evalInSandbox(scriptText, obj.sandbox, "1.8", ID_URI, 1);
+    Cu.evalInSandbox(scriptText, sandbox.box, "1.8", this.ID_URI, 1);
   },
   
   // Received a list of emails from BrowserID for current user
-  _gotEmails: function _gotEmails(emails, obj, cb, options) {
+  _gotEmails: function _gotEmails(emails, sandbox, cb, options) {
     let keys = Object.keys(emails);
 
     // If list is empty, user is not logged in, or doesn't have a default email.
     if (!keys.length) {
+      sandbox.free();
+
       let err = "User is not logged in, or no emails were found";
       this._log.error(err);
-      cb(new Error(err), null);
+      try {
+        cb(new Error(err), null);
+      } catch(e) {
+        this._log.warn("Callback threw in _gotEmails " + e);
+      }
       return;
     }
 
@@ -160,7 +176,7 @@ BrowserIDService.prototype = {
     // Case 1: Explicitely provided
     if (options.requiredEmail) {
       this._getAssertionWithEmail(
-        obj, cb, options.requiredEmail, options.audience
+        sandbox, cb, options.requiredEmail, options.audience
       );
       return;
     }
@@ -168,14 +184,14 @@ BrowserIDService.prototype = {
     // Case 2: Derive from a given domain
     if (options.sameEmailAs) {
       this._getAssertionWithDomain(
-        obj, cb, options.sameEmailAs, options.audience
+        sandbox, cb, options.sameEmailAs, options.audience
       );
       return;
     }
 
     // Case 3: Default email
     this._getAssertionWithEmail(
-      obj, cb, keys[0], options.audience
+      sandbox, cb, keys[0], options.audience
     );
     return;
   },
@@ -194,9 +210,11 @@ BrowserIDService.prototype = {
     let oldPerm = pm.testExactPermission(origin, "popup");
     try {
       pm.add(origin, "popup", pm.ALLOW_ACTION);
-    } catch(e) {}
+    } catch(e) {
+      this._log.warn("Setting popup blocking to false failed " + e);
+    }
 
-    // Open sandbox and execute script.
+    // Open sandbox and execute script. This sandbox will be GC'ed.
     let sandbox = new Cu.Sandbox(win, {
       wantXrays:        false,
       sandboxPrototype: win
@@ -204,35 +222,44 @@ BrowserIDService.prototype = {
 
     let self = this;
     function callback(val) {
-      if (val) {
-        self._log.info("_getAssertionWithLogin succeeded");
-        cb(null, val);
-      } else {
-        let msg = "Could not obtain assertion in _getAssertionWithLogin";
-        self._log.error(msg);
-        cb(new Error(msg), null);
-      }
-
       // Set popup blocker permission to original value.
       try {
         pm.add(origin, "popup", oldPerm);
-      } catch(e) {}
+      } catch(e) {
+        this._log.warn("Setting popup blocking to original value failed " + e);
+      }
+
+      if (val) {
+        self._log.info("_getAssertionWithLogin succeeded");
+        try {
+          cb(null, val);
+        } catch(e) {
+          self._log.warn("Callback threw in _getAssertionWithLogin " + e);
+        }
+      } else {
+        let msg = "Could not obtain assertion in _getAssertionWithLogin";
+        self._log.error(msg);
+        try {
+          cb(new Error(msg), null);
+        } catch(e) {
+          self._log.warn("Callback threw in _getAssertionWithLogin " + e);
+        }
+      }
     }
-    sandbox.importFunction(callback, "callback");
+    sandbox.importFunction(callback);
 
     function doGetAssertion() {
       self._log.info("_getAssertionWithLogin Started");
       let scriptText = "window.navigator.id.get(" +
                        "  callback, {allowPersistent: true}" +
                        ");";
-      Cu.evalInSandbox(scriptText, sandbox, "1.8", ID_URI, 1);
+      Cu.evalInSandbox(scriptText, sandbox, "1.8", self.ID_URI, 1);
     }
 
     // Sometimes the provided win hasn't fully loaded yet
-    let cWin = win.wrappedJSObject;
-    if (!cWin.document || (cWin.document.readyState != "complete")) {
-      cWin.addEventListener("DOMContentLoaded", function _contentLoaded() {
-        cWin.removeEventListener("DOMContentLoaded", _contentLoaded, false);
+    if (!win.document || (win.document.readyState != "complete")) {
+      win.addEventListener("DOMContentLoaded", function _contentLoaded() {
+        win.removeEventListener("DOMContentLoaded", _contentLoaded, false);
         doGetAssertion();
       }, false);
     } else {
@@ -243,30 +270,48 @@ BrowserIDService.prototype = {
   /**
    * Gets an assertion for the specified 'email' and 'audience'
    */
-  _getAssertionWithEmail: function _getAssertionWithEmail(obj, cb, email,
+  _getAssertionWithEmail: function _getAssertionWithEmail(sandbox, cb, email,
                                                           audience) {
     let self = this;
 
     function onSuccess(res) {
+      // Cleanup first.
+      sandbox.free();
+
       // The internal API sometimes calls onSuccess even though no assertion
       // could be obtained! Double check:
       if (!res) {
         let msg = "BrowserID.User.getAssertion empty assertion for " + email;
         self._log.error(msg);
-        cb(new Error(msg), null);
+        try {
+          cb(new Error(msg), null);
+        } catch(e) {
+          self._log.warn("Callback threw in _getAssertionWithEmail " + e);
+        }
         return;
       }
+
+      // Success
       self._log.info("BrowserID.User.getAssertion succeeded");
-      cb(null, res);
-      obj.free();
+      try {
+        cb(null, res);
+      } catch(e) {
+        self._log.warn("Callback threw in _getAssertionWithEmail " + e);
+      }
     }
+
     function onError(err) {
+      sandbox.free();
+
       self._log.info("BrowserID.User.getAssertion failed");
-      cb(err, null);
-      obj.free();
+      try {
+        cb(err, null);
+      } catch(e) {
+        self._log.warn("Callback threw in _getAssertionWithEmail " + e);
+      }
     }
-    obj.sandbox.importFunction(onSuccess, "onSuccess");
-    obj.sandbox.importFunction(onError, "onError");
+    sandbox.box.importFunction(onSuccess);
+    sandbox.box.importFunction(onError);
 
     self._log.info("_getAssertionWithEmail Started");
     let scriptText = 
@@ -276,26 +321,30 @@ BrowserIDService.prototype = {
         "onSuccess, "           +
         "onError"               +
       ");";
-    Cu.evalInSandbox(scriptText, obj.sandbox, "1.8", ID_URI, 1);
+    Cu.evalInSandbox(scriptText, sandbox.box, "1.8", this.ID_URI, 1);
   },
 
   /**
    * Gets the email which was used to login to 'domain'. If one was found,
    * _getAssertionWithEmail is called to obtain the assertion.
    */
-  _getAssertionWithDomain: function _getAssertionWithDomain(obj, cb, domain,
+  _getAssertionWithDomain: function _getAssertionWithDomain(sandbox, cb, domain,
                                                             audience) {
     let self = this;
 
     function onDomainSuccess(email) {
       if (email) {
-        self._getAssertionWithEmail(obj, cb, email, audience);
+        self._getAssertionWithEmail(sandbox, cb, email, audience);
       } else {
-        cb(new Error("No email found for _getAssertionWithDomain"), null);
-        obj.free();
+        sandbox.free();
+        try {
+          cb(new Error("No email found for _getAssertionWithDomain"), null);
+        } catch(e) {
+          self._log.warn("Callback threw in _getAssertionWithDomain " + e);
+        }
       }
     }
-    obj.sandbox.importFunction(onDomainSuccess, "onDomainSuccess");
+    sandbox.box.importFunction(onDomainSuccess);
 
     // This wil tell us which email was used to login to "domain", if any.
     self._log.info("_getAssertionWithDomain Started");
@@ -304,32 +353,35 @@ BrowserIDService.prototype = {
         "'" + domain + "', "  +
         "'email'"             +
       "));";
-    Cu.evalInSandbox(scriptText, obj.sandbox, "1.8", ID_URI, 1);
+    Cu.evalInSandbox(scriptText, sandbox.box, "1.8", this.ID_URI, 1);
   },
 };
 
 /**
- * An object that represents a sandbox in an iframe loaded with ID_URI. The
+ * An object that represents a sandbox in an iframe loaded with uri. The
  * callback provided to the constructor will be invoked when the sandbox is
  * ready to be used. The callback will receive this object as its only argument
- * and the prepared sandbox may be accessed via the "sandbox" property.
+ * and the prepared sandbox may be accessed via the "box" property.
  *
  * Please call free() when you are finished with the sandbox to explicitely free
  * up all associated resources.
  *
  * @param cb
  *        (function) Callback to be invoked with a Sandbox, when ready.
+ * @param uri
+ *        (String) URI to be loaded in the Sandbox.
  */
-function BrowserIDSandbox(cb) {
+function Sandbox(cb, uri) {
+  this._uri = uri;
   this._createFrame();
-  this._createSandbox(cb);
+  this._createSandbox(cb, uri);
 }
-BrowserIDSandbox.prototype = {
+Sandbox.prototype = {
   /**
    * Frees the sandbox and releases the iframe created to host it.
    */
   free: function free() {
-    delete this._sandbox;
+    delete this.box;
     this._container.removeChild(this._frame);
     this._frame = null;
     this._container = null;
@@ -361,19 +413,19 @@ BrowserIDSandbox.prototype = {
     this._container = doc.documentElement;
   },
   
-  _createSandbox: function _createSandbox(cb) {
+  _createSandbox: function _createSandbox(cb, uri) {
     let self = this;
     this._frame.addEventListener(
       "DOMContentLoaded",
       function _makeSandboxContentLoaded(event) {
-        if (event.target.location.toString() != ID_URI) {
+        if (event.target.location.toString() != uri) {
           return;
         }
         event.target.removeEventListener(
           "DOMContentLoaded", _makeSandboxContentLoaded, false
         );
         let workerWindow = self._frame.contentWindow;
-        self.sandbox = new Cu.Sandbox(workerWindow, {
+        self.box = new Cu.Sandbox(workerWindow, {
           wantXrays:        false,
           sandboxPrototype: workerWindow
         });
@@ -384,7 +436,7 @@ BrowserIDSandbox.prototype = {
 
     // Load the iframe.
     this._frame.docShell.loadURI(
-      ID_URI,
+      uri,
       this._frame.docShell.LOAD_FLAGS_NONE,
       null, // referrer
       null, // postData
