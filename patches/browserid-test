@@ -1,11 +1,10 @@
 # HG changeset patch
-# Parent e81dfb0fbf74b122862939089be1e40e6afbd374
+# Parent 7039a57ca4f85e0b8003347e7c5d08cd29d7bcea
 
 diff --git a/services/identity/tests/Makefile.in b/services/identity/tests/Makefile.in
 --- a/services/identity/tests/Makefile.in
 +++ b/services/identity/tests/Makefile.in
-@@ -9,8 +9,20 @@ VPATH          = @srcdir@
- relativesrcdir = services/identity/tests
+@@ -10,16 +10,21 @@ relativesrcdir = services/identity/tests
  
  include $(DEPTH)/config/autoconf.mk
  
@@ -13,22 +12,24 @@ diff --git a/services/identity/tests/Makefile.in b/services/identity/tests/Makef
  XPCSHELL_TESTS = unit
  
  include $(topsrcdir)/config/rules.mk
-+
+ 
 +# Number the test files because order is very important!
-+_BROWSER_FILES = \
-+  head.js \
-+  browser_identity_1_fresh.js \
-+  browser_identity_2_login.js \
-+  browser_identity_3_default.js \
-+  browser_identity_4_emailas.js \
-+  $(NULL)
-+
-+libs::  $(_BROWSER_FILES)
-+	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/browser/$(relativesrcdir)
-diff --git a/services/identity/tests/browser_identity_1_fresh.js b/services/identity/tests/browser_identity_1_fresh.js
+ _BROWSER_FILES = \
+   head.js \
++  browser_id_1_fresh.js \
++  browser_id_2_login.js \
++  browser_id_3_default.js \
++  browser_id_4_emailas.js \
+   browser_id_simple.js \
+   file_browser_id_mock.html \
+   $(NULL)
+ 
+ libs:: $(_BROWSER_FILES)
+ 	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/browser/$(relativesrcdir)
+diff --git a/services/identity/tests/browser_id_1_fresh.js b/services/identity/tests/browser_id_1_fresh.js
 new file mode 100644
 --- /dev/null
-+++ b/services/identity/tests/browser_identity_1_fresh.js
++++ b/services/identity/tests/browser_id_1_fresh.js
 @@ -0,0 +1,69 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -41,7 +42,7 @@ new file mode 100644
 + */
 +function test() {
 +  ok(BrowserID, "BrowserID exists");
-+
++ 
 +  try {
 +    BrowserID.getAssertion();
 +  } catch (e) {
@@ -100,10 +101,10 @@ new file mode 100644
 +  finish();
 +}
 \ No newline at end of file
-diff --git a/services/identity/tests/browser_identity_2_login.js b/services/identity/tests/browser_identity_2_login.js
+diff --git a/services/identity/tests/browser_id_2_login.js b/services/identity/tests/browser_id_2_login.js
 new file mode 100644
 --- /dev/null
-+++ b/services/identity/tests/browser_identity_2_login.js
++++ b/services/identity/tests/browser_id_2_login.js
 @@ -0,0 +1,52 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -116,7 +117,7 @@ new file mode 100644
 + */
 +function test() {
 +  loadURL(marketplace + "/en-US/login", function() {
-+    BrowserID.getAssertionWithLogin(gotassertion, {}, gBrowser.contentWindow);
++    BrowserID.getAssertionWithLogin(gotassertion, gBrowser.contentWindow);
 +    // Wait a couple of seconds for the BrowserID popup to appear.
 +    setTimeout(signin, 2000);
 +  });
@@ -158,10 +159,10 @@ new file mode 100644
 +  finish();
 +}
 \ No newline at end of file
-diff --git a/services/identity/tests/browser_identity_3_default.js b/services/identity/tests/browser_identity_3_default.js
+diff --git a/services/identity/tests/browser_id_3_default.js b/services/identity/tests/browser_id_3_default.js
 new file mode 100644
 --- /dev/null
-+++ b/services/identity/tests/browser_identity_3_default.js
++++ b/services/identity/tests/browser_id_3_default.js
 @@ -0,0 +1,26 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -190,10 +191,10 @@ new file mode 100644
 +  finish();
 +}
 \ No newline at end of file
-diff --git a/services/identity/tests/browser_identity_4_emailas.js b/services/identity/tests/browser_identity_4_emailas.js
+diff --git a/services/identity/tests/browser_id_4_emailas.js b/services/identity/tests/browser_id_4_emailas.js
 new file mode 100644
 --- /dev/null
-+++ b/services/identity/tests/browser_identity_4_emailas.js
++++ b/services/identity/tests/browser_id_4_emailas.js
 @@ -0,0 +1,27 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -224,16 +225,17 @@ new file mode 100644
 +}
 \ No newline at end of file
 diff --git a/services/identity/tests/head.js b/services/identity/tests/head.js
-new file mode 100644
---- /dev/null
+--- a/services/identity/tests/head.js
 +++ b/services/identity/tests/head.js
-@@ -0,0 +1,43 @@
-+/* Any copyright is dedicated to the Public Domain.
-+   http://creativecommons.org/publicdomain/zero/1.0/ */
-+
-+Components.utils.import("resource://gre/modules/Services.jsm");
-+Components.utils.import("resource://services-identity/browserid.js");
-+
+@@ -3,21 +3,50 @@
+ 
+ let tmp = {};
+ Components.utils.import("resource://gre/modules/Services.jsm");
+ Components.utils.import("resource://services-identity/browserid.js", tmp);
+ 
+ const BrowserID = tmp.BrowserID;
+ const testPath = "http://mochi.test:8888/browser/services/identity/tests/";
+ 
 +const google = "http://www.google.com/";
 +const dashboard = "https://myapps.mozillalabs.com/";
 +const marketplace = "https://marketplace.mozilla.org";
@@ -242,13 +244,18 @@ new file mode 100644
 +const testPassword = "moztestpassword";
 +const signInPage = "https://browserid.org/signin";
 +
-+function loadURL(aURL, aCB) {
-+  gBrowser.selectedBrowser.addEventListener("load", function () {
-+    gBrowser.selectedBrowser.removeEventListener("load", arguments.callee, true);
-+    is(gBrowser.currentURI.spec, aURL, "loaded expected URL");
-+    aCB();
-+  }, true);
-+  gBrowser.loadURI(aURL);
+ function loadURL(aURL, aCB) {
+   gBrowser.selectedBrowser.addEventListener("load", function () {
+     gBrowser.selectedBrowser.removeEventListener("load", arguments.callee, true);
+     is(gBrowser.currentURI.spec, aURL, "loaded expected URL");
+     aCB();
+   }, true);
+   gBrowser.loadURI(aURL);
+ }
+ 
+ function setEndpoint(name) {
+   let fullPath = testPath + "file_" + name + ".html";
+   Services.prefs.setCharPref("identity.browserid.url", fullPath);
 +}
 +
 +function parseAssertion(assertion) {
@@ -270,5 +277,5 @@ new file mode 100644
 +    email: cert.principal.email,
 +    audience: assert.aud
 +  };
-+}
+ }
 \ No newline at end of file
