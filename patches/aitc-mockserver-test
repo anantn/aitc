@@ -1,0 +1,191 @@
+# HG changeset patch
+# Parent 209adfa46c65802a5a2bba20090bd7b35ceb83c7
+
+diff -r 209adfa46c65 services/aitc/tests/unit/test_mock_server.js
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/services/aitc/tests/unit/test_mock_server.js	Wed May 23 16:01:50 2012 -0700
+@@ -0,0 +1,184 @@
++/* Any copyright is dedicated to the Public Domain.
++   http://creativecommons.org/publicdomain/zero/1.0/ */
++
++"use strict";
++
++Cu.import("resource://services-common/rest.js");
++Cu.import("resource://services-common/utils.js");
++Cu.import("resource://services-aitc/client.js");
++Cu.import("resource://services-common/preferences.js");
++
++const PREFS = new Preferences("services.aitc.")
++
++function run_test() {
++  initTestLogging("Trace");
++  run_next_test();
++}
++
++function get_aitc_server() {
++  _("Create new server.");
++
++  let server = new AITCServer10Server();
++  server.start(get_server_port());
++
++  return server;
++}
++
++function get_server_with_user(username) {
++  _("Create server user for User " + username);
++
++  let server = get_aitc_server();
++  server.createUser(username);
++
++  return server;
++}
++
++function get_mock_app() {
++
++  return {
++    origin: "http://example.com",
++    manifestPath: "/manifest.webapp",
++    installOrigin: "http://example.com",
++    installedAt: new Date().toString(),
++    modifiedAt: new Date().toString(),
++    receipts: [],
++    name: "Mocking Birds",
++  };
++
++}
++
++function get_client_for_server(username, server) {
++  _("Create server user for User " + username);
++
++  let token = {
++    endpoint: server.url + username,
++    id: 'ID-HERE',
++    key: 'KEY-HERE'
++  };
++
++  let client = new AitcClient(token, PREFS);
++
++  return client;
++}
++
++add_test(function test_empty_user_apps() {
++  _("Ensure apps request for empty user has appropriate content.");
++
++  const username = "123";
++
++  let server = get_server_with_user(username);
++  let request = new RESTRequest(server.url + username + "/apps/");
++  _("Performing request...");
++  request.get(function onComplete(error) {
++    _("Got response");
++    do_check_eq(error, null);
++
++    do_check_eq(200, this.response.status);
++    let headers = this.response.headers;
++    do_check_true("content-type" in headers);
++    do_check_eq(headers["content-type"], "application/json");
++    do_check_true("x-timestamp" in headers);
++
++    let body = this.response.body;
++    let parsed = JSON.parse(body);
++    do_check_attribute_count(parsed, 1);
++    do_check_true("apps" in parsed);
++    do_check_true(Array.isArray(parsed.apps));
++    do_check_eq(parsed.apps.length, 0);
++
++    server.stop(run_next_test);
++  });
++});
++
++add_test(function test_getapps_empty() {
++
++  const username = "123";
++
++  let server = get_server_with_user(username);
++  let client = get_client_for_server(username, server);
++
++  client.getApps(function(error, apps) {
++    _("Got response");
++    do_check_eq(error, null);
++
++    do_check_true(Array.isArray(apps));
++    do_check_eq(apps.length, 0);
++
++    server.stop(run_next_test);
++  });
++
++
++});
++
++
++add_test(function test_install_app() {
++
++  const username = "123";
++  const app = get_mock_app();
++
++  let server = get_server_with_user(username);
++
++  let client = get_client_for_server(username, server);
++
++  client.remoteInstall(app, function(error, status) {
++    _("Got response");
++    do_check_eq(error, null);
++
++    do_check_true(status);
++
++
++    client.getApps(function(error, apps) {
++      _("Got response");
++      do_check_eq(error, null);
++
++      do_check_true(Array.isArray(apps));
++      do_check_eq(apps.length, 1);
++
++      let first = apps[0];
++
++      do_check_eq(first.origin, app.origin);
++
++      server.stop(run_next_test);
++    });
++
++  });
++
++
++});
++
++add_test(function test_uninstall_app() {
++
++  const username = "123";
++  const app = get_mock_app();
++
++  let server = get_server_with_user(username);
++  server.users[username].addApp(app);
++
++  let client = get_client_for_server(username, server);
++
++  client.remoteUninstall(app, function(error, status) {
++    _("Got response");
++    do_check_eq(error, null);
++
++    do_check_true(status);
++
++    client.getApps(function(error, apps) {
++      _("Got response");
++      do_check_eq(error, null);
++
++      do_check_true(Array.isArray(apps));
++      do_check_eq(apps.length, 1);
++
++      let first = apps[0];
++
++      do_check_eq(first.origin, app.origin);
++      do_check_true(first.deleted);
++
++      server.stop(run_next_test);
++    });
++
++  });
++
++});
++
++
