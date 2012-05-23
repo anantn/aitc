@@ -1,0 +1,15 @@
+# HG changeset patch
+# Parent 0fdfb6b635d47398c4139bfcc4e099c7bd626402
+
+diff -r 0fdfb6b635d4 services/aitc/tests/unit/test_load_modules.js
+--- a/services/aitc/tests/unit/test_load_modules.js	Mon May 07 09:45:53 2012 -0700
++++ b/services/aitc/tests/unit/test_load_modules.js	Mon May 14 10:04:54 2012 -0700
+@@ -5,7 +5,7 @@
+ 
+ function run_test() {
+   for each (let m in modules) {
+-    _("Attempting to load resource://services-aitc/" + m);
++    // _("Attempting to load resource://services-aitc/" + m);
+     Cu.import("resource://services-aitc/" + m, {});
+   }
+ }

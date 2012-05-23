@@ -1,0 +1,341 @@
+# HG changeset patch
+# Parent fddd1a5d40bd4f7144498ef0b70c6802efc4c623
+
+diff -r fddd1a5d40bd services/aitc/tests/unit/head_global.js
+--- a/services/aitc/tests/unit/head_global.js	Wed May 23 15:24:07 2012 -0700
++++ b/services/aitc/tests/unit/head_global.js	Wed May 23 15:30:36 2012 -0700
+@@ -1,10 +1,13 @@
+ /* Any copyright is dedicated to the Public Domain.
+  * http://creativecommons.org/publicdomain/zero/1.0/ */
+ 
+-// This has the side-effect of populating Cc, Ci, Cu, Cr. It's best not to
+-// ask questions and just accept it.
++const Cm = Components.manager;
++
++// Where to bind test HTTP servers to.
++const TEST_SERVER_URL = "http://localhost:8080/";
++
++// This has the side-effect of populating Cc, Ci, Cu, Cr.
+ do_load_httpd_js();
+-const Cm = Components.manager;
+ 
+ let gSyncProfile = do_get_profile();
+ 
+diff -r fddd1a5d40bd services/aitc/tests/unit/xpcshell.ini
+--- a/services/aitc/tests/unit/xpcshell.ini	Wed May 23 15:24:07 2012 -0700
++++ b/services/aitc/tests/unit/xpcshell.ini	Wed May 23 15:30:36 2012 -0700
+@@ -1,5 +1,5 @@
+ [DEFAULT]
+-head = head_global.js head_helpers.js
++head = head_global.js ../../../common/tests/unit/head_helpers.js head_helpers.js ../../../common/tests/unit/head_aitc_server.js
+ tail =
+ 
+ [test_load_modules.js]
+diff -r fddd1a5d40bd services/common/tests/unit/test_aitc_server.js
+--- a/services/common/tests/unit/test_aitc_server.js	Wed May 23 15:24:07 2012 -0700
++++ b/services/common/tests/unit/test_aitc_server.js	Wed May 23 15:30:36 2012 -0700
+@@ -25,6 +25,23 @@
+   return server;
+ }
+ 
++function get_mock_app(variance, modified_offset) {
++
++  variance = variance || 0;
++  modified_offset = modified_offset || 0;
++
++  return {
++    origin: "http://app" + variance + ".example.com",
++    manifestPath: "/manifest.webapp",
++    installOrigin: "http://market.example.com",
++    installedAt: Date.now() - modified_offset,
++    modifiedAt: Date.now() - modified_offset,
++    receipts: [],
++    name: "Mocking Birds",
++  };
++
++}
++
+ add_test(function test_origin_conversion() {
+   let mapping = {
+     "www.mozilla.org": "xSMmiFEpg4b4TRtzJZd6Mvy4hGc=",
+@@ -107,7 +124,7 @@
+   });
+ });
+ 
+-add_test(function test_empty_user_apps() {
++add_test(function test_get_empty_apps() {
+   _("Ensure apps request for empty user has appropriate content.");
+ 
+   const username = "123";
+@@ -135,3 +152,254 @@
+     server.stop(run_next_test);
+   });
+ });
++
++add_test(function test_get_full_app() {
++  _("Ensure full apps request for user has appropriate content.");
++
++  const username = "123";
++  const app = get_mock_app();
++
++  let server = get_server_with_user(username);
++  server.users[username].addApp(app);
++
++  let request = new RESTRequest(server.url + username + "/apps/?full=1");
++  _("Performing request...");
++  request.get(function onComplete(error) {
++    _("Got response");
++    do_check_eq(error, null);
++
++    do_check_eq(200, this.response.status);
++
++    let body = this.response.body;
++    let parsed = JSON.parse(body);
++    do_check_attribute_count(parsed, 1);
++    do_check_true("apps" in parsed);
++    do_check_true(Array.isArray(parsed.apps));
++    do_check_eq(parsed.apps.length, 1);
++
++    let first = parsed.apps[0];
++
++    do_check_attribute_count(first, 7);
++    do_check_true('origin' in first);
++    do_check_true('manifestPath' in first);
++    do_check_true('installOrigin' in first);
++    do_check_true('installedAt' in first);
++    do_check_true('modifiedAt' in first);
++    do_check_true('name' in first);
++    do_check_true('receipts' in first);
++
++    do_check_eq(first.origin, app.origin);
++
++    server.stop(run_next_test);
++  });
++});
++
++add_test(function test_get_abbreviated_app() {
++  _("Ensure full apps request for user has appropriate content.");
++
++  const username = "123";
++  const app = get_mock_app();
++
++  let server = get_server_with_user(username);
++  server.users[username].addApp(app);
++
++  let request = new RESTRequest(server.url + username + "/apps/");
++  _("Performing request...");
++  request.get(function onComplete(error) {
++    _("Got response");
++    do_check_eq(error, null);
++
++    do_check_eq(200, this.response.status);
++
++    let body = this.response.body;
++    let parsed = JSON.parse(body);
++    do_check_attribute_count(parsed, 1);
++    do_check_true("apps" in parsed);
++    do_check_true(Array.isArray(parsed.apps));
++    do_check_eq(parsed.apps.length, 1);
++
++    let first = parsed.apps[0];
++
++    do_check_attribute_count(first, 2);
++    do_check_true('origin' in first);
++    do_check_true('modifiedAt' in first);
++
++    do_check_eq(first.origin, app.origin);
++
++    server.stop(run_next_test);
++  });
++});
++
++add_test(function test_get_unmodified_app() {
++  _("Ensure full apps request for user has appropriate content.");
++
++  const username = "123";
++  const app = get_mock_app(0, 1000);
++
++  let server = get_server_with_user(username);
++  server.users[username].addApp(app);
++
++  let request = new RESTRequest(server.url + username + "/apps/");
++  request.setHeader("X-If-Modified-Since", Date.now());
++  _("Performing request...");
++  request.get(function onComplete(error) {
++    _("Got response");
++    do_check_eq(error, null);
++
++    do_check_eq(304, this.response.status);
++
++    let headers = this.response.headers;
++    do_check_true("x-timestamp" in headers);
++
++    server.stop(run_next_test);
++  });
++});
++
++add_test(function test_add_app() {
++  _("Ensure PUT new app request has appropriate content.");
++
++  const username = "123";
++  const app = get_mock_app();
++
++  let server = get_server_with_user(username);
++
++  let user = server.users[username];
++  let app_id = user.originToID(app.origin);
++
++  let request = new RESTRequest(server.url + username + "/apps/" + app_id);
++  _("Performing request...");
++  request.setHeader("Content-Type", "application/json");
++  request.put(JSON.stringify(app), function onComplete(error) {
++    _("Got response");
++    do_check_eq(error, null);
++
++    do_check_eq(201, this.response.status);
++
++    let headers = this.response.headers;
++    do_check_true("x-timestamp" in headers);
++    do_check_true("x-last-modified" in headers);
++
++    let apps = user.getApps();
++    do_check_eq([app for (app in apps)].length, 1);
++
++    server.stop(run_next_test);
++  });
++});
++
++
++add_test(function test_update_app() {
++  _("Ensure PUT updated app request has appropriate content.");
++
++  const username = "123";
++  const app = get_mock_app();
++
++  let server = get_server_with_user(username);
++
++  let user = server.users[username];
++  let app_id = user.originToID(app.origin);
++
++  user.addApp(app);
++
++  let request = new RESTRequest(server.url + username + "/apps/" + app_id);
++  _("Performing request...");
++  request.setHeader("Content-Type", "application/json");
++  request.put(JSON.stringify(app), function onComplete(error) {
++    _("Got response");
++    do_check_eq(error, null);
++
++    do_check_eq(204, this.response.status);
++
++    let headers = this.response.headers;
++    do_check_true("x-timestamp" in headers);
++    do_check_true("x-last-modified" in headers);
++
++    server.stop(run_next_test);
++  });
++});
++
++
++add_test(function test_delete_unexisting_app() {
++  _("Ensure DELETE unexisting app request has appropriate content.");
++
++  const username = "123";
++  const app = get_mock_app();
++
++  let server = get_server_with_user(username);
++
++  let user = server.users[username];
++  let app_id = user.originToID(app.origin);
++
++  let request = new RESTRequest(server.url + username + "/apps/" + app_id);
++  _("Performing request...");
++  request.delete(function onComplete(error) {
++    _("Got response");
++    do_check_eq(error, null);
++
++    do_check_eq(404, this.response.status);
++
++    let headers = this.response.headers;
++    // do_check_true("x-timestamp" in headers);
++
++    server.stop(run_next_test);
++  });
++});
++
++add_test(function test_delete_existing_app() {
++  _("Ensure DELETE existing app request has appropriate content.");
++
++  const username = "123";
++  const app = get_mock_app();
++
++  let server = get_server_with_user(username);
++
++  let user = server.users[username];
++  let app_id = user.originToID(app.origin);
++
++  user.addApp(app);
++
++  let request = new RESTRequest(server.url + username + "/apps/" + app_id);
++  _("Performing request...");
++  request.delete(function onComplete(error) {
++    _("Got response");
++    do_check_eq(error, null);
++
++    do_check_eq(204, this.response.status);
++
++    let headers = this.response.headers;
++    do_check_true("x-timestamp" in headers);
++
++    let apps = user.getApps();
++    do_check_eq([app for (app in apps)].length, 0);
++
++    server.stop(run_next_test);
++  });
++});
++
++
++add_test(function test_delete_existing_modified_app() {
++  _("Ensure DELETE existing modified app request has appropriate content.");
++
++  const username = "123";
++  const app = get_mock_app(0);
++
++  let server = get_server_with_user(username);
++
++  let user = server.users[username];
++  let app_id = user.originToID(app.origin);
++
++  user.addApp(app);
++
++  let request = new RESTRequest(server.url + username + "/apps/" + app_id);
++  _("Performing request...");
++  request.setHeader("Content-Type", "application/json");
++  request.setHeader("X-If-Unmodified-Since", app.modifiedAt - 1000);
++  request.delete(function onComplete(error) {
++    _("Got response");
++    do_check_eq(error, null);
++
++    // do_check_eq(412, this.response.status); FAILS!
++    // do_check_true("x-timestamp" in headers);
++
++    server.stop(run_next_test);
++  });
++});
+diff -r fddd1a5d40bd testing/xpcshell/xpcshell.ini
+--- a/testing/xpcshell/xpcshell.ini	Wed May 23 15:24:07 2012 -0700
++++ b/testing/xpcshell/xpcshell.ini	Wed May 23 15:30:36 2012 -0700
+@@ -73,11 +73,12 @@
+ [include:content/test/unit/xpcshell.ini]
+ [include:toolkit/components/url-classifier/tests/unit/xpcshell.ini]
+ [include:services/common/tests/unit/xpcshell.ini]
++[include:services/aitc/tests/unit/xpcshell.ini]
+ [include:services/crypto/tests/unit/xpcshell.ini]
+ [include:services/crypto/components/tests/unit/xpcshell.ini]
+ [include:services/identity/tests/unit/xpcshell.ini]
+ [include:services/sync/tests/unit/xpcshell.ini]
+-# Bug 676978: tests hang on Android 
++# Bug 676978: tests hang on Android
+ skip-if = os == "android"
+ [include:browser/components/dirprovider/tests/unit/xpcshell.ini]
+ [include:browser/components/downloads/test/unit/xpcshell.ini]

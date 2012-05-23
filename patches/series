@@ -3,3 +3,6 @@ browserid-test
 aitc
 aitc-storage
 aitc-manager
+mockserver
+mockserver-test
+aitc-tests
