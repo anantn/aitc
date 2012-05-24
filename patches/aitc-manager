@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 95a1db3b2e9e11d320f97c4aff7f3493decaf711
+# Parent 3466689c770f0a225e1669d3f70bcbc0133555c1
 # User Anant Narayanan <anant@kix.in>
 AITC main service & manager
 
@@ -174,12 +174,12 @@ new file mode 100644
 +Cu.import("resource://gre/modules/FileUtils.jsm");
 +
 +Cu.import("resource://services-aitc/client.js");
++Cu.import("resource://services-aitc/browserid.js");
 +Cu.import("resource://services-aitc/storage.js");
 +Cu.import("resource://services-common/log4moz.js");
 +Cu.import("resource://services-common/preferences.js");
 +Cu.import("resource://services-common/tokenserverclient.js");
 +Cu.import("resource://services-common/utils.js");
-+Cu.import("resource://services-identity/browserid.js");
 +
 +const PREFS = new Preferences("services.aitc.");
 +
@@ -622,26 +622,31 @@ diff --git a/services/aitc/service.js b/services/aitc/service.js
 diff --git a/services/aitc/services-aitc.js b/services/aitc/services-aitc.js
 --- a/services/aitc/services-aitc.js
 +++ b/services/aitc/services-aitc.js
-@@ -1,2 +1,11 @@
+@@ -1,5 +1,17 @@
+ pref("services.aitc.browserid.url", "https://browserid.org/sign_in");
+ pref("services.aitc.browserid.log.level", "Debug");
++
+ pref("services.aitc.client.log.level", "Debug");
++
 +pref("services.aitc.dashboard.url", "https://myapps.mozillalabs.com");
-+pref("services.aitc.marketplace.url", "https://marketplace.mozilla.org");
-+pref("services.aitc.tokenServer.url", "https://stage-token.services.mozilla.com");
 +
 +pref("services.aitc.manager.putFreq", 5000);
 +pref("services.aitc.manager.getFreq", 30000);
-+
- pref("services.aitc.client.log.level", "Debug");
--pref("services.aitc.storage.log.level", "Debug");
-\ No newline at end of file
 +pref("services.aitc.manager.log.level", "Debug");
++
++pref("services.aitc.marketplace.url", "https://marketplace.mozilla.org");
++
 +pref("services.aitc.service.log.level", "Debug");
-+pref("services.aitc.storage.log.level", "Debug");
+ pref("services.aitc.storage.log.level", "Debug");
+ 
++pref("services.aitc.tokenServer.url", "https://stage-token.services.mozilla.com");
 diff --git a/services/aitc/tests/unit/test_load_modules.js b/services/aitc/tests/unit/test_load_modules.js
 --- a/services/aitc/tests/unit/test_load_modules.js
 +++ b/services/aitc/tests/unit/test_load_modules.js
-@@ -1,10 +1,12 @@
+@@ -1,11 +1,13 @@
  const modules = [
    "client.js",
+   "browserid.js",
 +  "main.js",
 +  "manager.js",
    "storage.js"

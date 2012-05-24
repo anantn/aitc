@@ -1,10 +1,10 @@
 # HG changeset patch
-# Parent fddd1a5d40bd4f7144498ef0b70c6802efc4c623
+# Parent 4e025ffa7a3c0fcd1e6f2830eba935f62168c364
 
-diff -r fddd1a5d40bd services/aitc/tests/unit/head_global.js
---- a/services/aitc/tests/unit/head_global.js	Wed May 23 15:24:07 2012 -0700
-+++ b/services/aitc/tests/unit/head_global.js	Wed May 23 15:30:36 2012 -0700
-@@ -1,10 +1,13 @@
+diff --git a/services/aitc/tests/unit/head_global.js b/services/aitc/tests/unit/head_global.js
+--- a/services/aitc/tests/unit/head_global.js
++++ b/services/aitc/tests/unit/head_global.js
+@@ -1,15 +1,18 @@
  /* Any copyright is dedicated to the Public Domain.
   * http://creativecommons.org/publicdomain/zero/1.0/ */
  
@@ -21,20 +21,33 @@ diff -r fddd1a5d40bd services/aitc/tests/unit/head_global.js
  
  let gSyncProfile = do_get_profile();
  
-diff -r fddd1a5d40bd services/aitc/tests/unit/xpcshell.ini
---- a/services/aitc/tests/unit/xpcshell.ini	Wed May 23 15:24:07 2012 -0700
-+++ b/services/aitc/tests/unit/xpcshell.ini	Wed May 23 15:30:36 2012 -0700
-@@ -1,5 +1,5 @@
+ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ 
+ let XULAppInfo = {
+   vendor: "Mozilla",
+   name: "XPCShell",
+diff --git a/services/aitc/tests/unit/xpcshell.ini b/services/aitc/tests/unit/xpcshell.ini
+--- a/services/aitc/tests/unit/xpcshell.ini
++++ b/services/aitc/tests/unit/xpcshell.ini
+@@ -1,7 +1,7 @@
  [DEFAULT]
 -head = head_global.js head_helpers.js
 +head = head_global.js ../../../common/tests/unit/head_helpers.js head_helpers.js ../../../common/tests/unit/head_aitc_server.js
  tail =
  
  [test_load_modules.js]
-diff -r fddd1a5d40bd services/common/tests/unit/test_aitc_server.js
---- a/services/common/tests/unit/test_aitc_server.js	Wed May 23 15:24:07 2012 -0700
-+++ b/services/common/tests/unit/test_aitc_server.js	Wed May 23 15:30:36 2012 -0700
-@@ -25,6 +25,23 @@
+ [test_storage_queue.js]
+ [test_storage_registry.js]
+\ No newline at end of file
+diff --git a/services/common/tests/unit/test_aitc_server.js b/services/common/tests/unit/test_aitc_server.js
+--- a/services/common/tests/unit/test_aitc_server.js
++++ b/services/common/tests/unit/test_aitc_server.js
+@@ -20,16 +20,33 @@ function get_aitc_server() {
+ 
+ function get_server_with_user(username) {
+   let server = get_aitc_server();
+   server.createUser(username);
+ 
    return server;
  }
  
@@ -58,7 +71,17 @@ diff -r fddd1a5d40bd services/common/tests/unit/test_aitc_server.js
  add_test(function test_origin_conversion() {
    let mapping = {
      "www.mozilla.org": "xSMmiFEpg4b4TRtzJZd6Mvy4hGc=",
-@@ -107,7 +124,7 @@
+     "foo":             "C-7Hteo_D9vJXQ3UfzxbwnXaijM=",
+   };
+ 
+   for (let k in mapping) {
+     do_check_eq(AITCServer10User.prototype.originToID(k), mapping[k]);
+@@ -102,17 +119,17 @@ add_test(function test_empty_server_404(
+     request.get(function onComplete(error) {
+       do_check_eq(this.response.status, 404);
+ 
+       server.stop(run_next_test);
+     });
    });
  });
  
@@ -67,7 +90,17 @@ diff -r fddd1a5d40bd services/common/tests/unit/test_aitc_server.js
    _("Ensure apps request for empty user has appropriate content.");
  
    const username = "123";
-@@ -135,3 +152,254 @@
+ 
+   let server = get_server_with_user(username);
+   let request = new RESTRequest(server.url + username + "/apps/");
+   _("Performing request...");
+   request.get(function onComplete(error) {
+@@ -130,8 +147,259 @@ add_test(function test_empty_user_apps()
+     do_check_attribute_count(parsed, 1);
+     do_check_true("apps" in parsed);
+     do_check_true(Array.isArray(parsed.apps));
+     do_check_eq(parsed.apps.length, 0);
+ 
      server.stop(run_next_test);
    });
  });
@@ -322,20 +355,3 @@ diff -r fddd1a5d40bd services/common/tests/unit/test_aitc_server.js
 +    server.stop(run_next_test);
 +  });
 +});
-diff -r fddd1a5d40bd testing/xpcshell/xpcshell.ini
---- a/testing/xpcshell/xpcshell.ini	Wed May 23 15:24:07 2012 -0700
-+++ b/testing/xpcshell/xpcshell.ini	Wed May 23 15:30:36 2012 -0700
-@@ -73,11 +73,12 @@
- [include:content/test/unit/xpcshell.ini]
- [include:toolkit/components/url-classifier/tests/unit/xpcshell.ini]
- [include:services/common/tests/unit/xpcshell.ini]
-+[include:services/aitc/tests/unit/xpcshell.ini]
- [include:services/crypto/tests/unit/xpcshell.ini]
- [include:services/crypto/components/tests/unit/xpcshell.ini]
- [include:services/identity/tests/unit/xpcshell.ini]
- [include:services/sync/tests/unit/xpcshell.ini]
--# Bug 676978: tests hang on Android 
-+# Bug 676978: tests hang on Android
- skip-if = os == "android"
- [include:browser/components/dirprovider/tests/unit/xpcshell.ini]
- [include:browser/components/downloads/test/unit/xpcshell.ini]

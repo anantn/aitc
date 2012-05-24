@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 5e79d9b1aa472c79144fcf4fc7f30bc6e7b83a85
+# Parent bc9a3a32b4358b9ed27266bc70515ab1b6f522c0
 aitc-client
 
 diff --git a/services/Makefile.in b/services/Makefile.in
@@ -14,8 +14,8 @@ diff --git a/services/Makefile.in b/services/Makefile.in
  include $(DEPTH)/config/autoconf.mk
  
  ifdef MOZ_SERVICES_SYNC
--PARALLEL_DIRS += common crypto identity sync
-+PARALLEL_DIRS += aitc common crypto identity sync
+-PARALLEL_DIRS += common crypto sync
++PARALLEL_DIRS += aitc common crypto sync
  endif
  
  include $(topsrcdir)/config/rules.mk
@@ -553,3 +553,24 @@ new file mode 100644
 +
 +# Ensure we can import everything.
 +[test_load_modules.js]
+diff --git a/testing/xpcshell/xpcshell.ini b/testing/xpcshell/xpcshell.ini
+--- a/testing/xpcshell/xpcshell.ini
++++ b/testing/xpcshell/xpcshell.ini
+@@ -63,16 +63,17 @@ skip-if = os == "android"
+ [include:extensions/cookie/test/unit/xpcshell.ini]
+ [include:storage/test/unit/xpcshell.ini]
+ [include:rdf/tests/unit/xpcshell.ini]
+ [include:gfx/tests/unit/xpcshell.ini]
+ [include:widget/tests/unit/xpcshell.ini]
+ [include:content/base/test/unit/xpcshell.ini]
+ [include:content/test/unit/xpcshell.ini]
+ [include:toolkit/components/url-classifier/tests/unit/xpcshell.ini]
++[include:services/aitc/tests/unit/xpcshell.ini]
+ [include:services/common/tests/unit/xpcshell.ini]
+ [include:services/crypto/tests/unit/xpcshell.ini]
+ [include:services/crypto/components/tests/unit/xpcshell.ini]
+ [include:services/sync/tests/unit/xpcshell.ini]
+ # Bug 676978: tests hang on Android 
+ skip-if = os == "android"
+ [include:browser/components/dirprovider/tests/unit/xpcshell.ini]
+ [include:browser/components/downloads/test/unit/xpcshell.ini]

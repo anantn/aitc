@@ -1,71 +1,10 @@
 # HG changeset patch
-# Parent bc9a3a32b4358b9ed27266bc70515ab1b6f522c0
+# Parent c8d46d921dba59c9423bce4dbd40d5db6260d05f
 
-diff --git a/services/Makefile.in b/services/Makefile.in
---- a/services/Makefile.in
-+++ b/services/Makefile.in
-@@ -38,12 +38,12 @@
- DEPTH     = ..
- topsrcdir = @top_srcdir@
- srcdir    = @srcdir@
- VPATH     = @srcdir@
- 
- include $(DEPTH)/config/autoconf.mk
- 
- ifdef MOZ_SERVICES_SYNC
--PARALLEL_DIRS += common crypto sync
-+PARALLEL_DIRS += common crypto identity sync
- endif
- 
- include $(topsrcdir)/config/rules.mk
-diff --git a/services/identity/IDComponents.manifest b/services/identity/IDComponents.manifest
+diff --git a/services/aitc/modules/browserid.js b/services/aitc/modules/browserid.js
 new file mode 100644
 --- /dev/null
-+++ b/services/identity/IDComponents.manifest
-@@ -0,0 +1,2 @@
-+# Register resource aliases
-+resource services-identity resource:///modules/services-identity/
-\ No newline at end of file
-diff --git a/services/identity/Makefile.in b/services/identity/Makefile.in
-new file mode 100644
---- /dev/null
-+++ b/services/identity/Makefile.in
-@@ -0,0 +1,31 @@
-+# This Source Code Form is subject to the terms of the Mozilla Public
-+# License, v. 2.0. If a copy of the MPL was not distributed with this file,
-+# You can obtain one at http://mozilla.org/MPL/2.0/.
-+
-+DEPTH     = ../..
-+topsrcdir = @top_srcdir@
-+srcdir    = @srcdir@
-+VPATH     = @srcdir@
-+
-+include $(DEPTH)/config/autoconf.mk
-+
-+EXTRA_COMPONENTS = \
-+  IDComponents.manifest \
-+  $(NULL)
-+
-+PREF_JS_EXPORTS = $(srcdir)/identity-common.js
-+
-+modules := \
-+  browserid.js \
-+  $(NULL)
-+
-+source_modules = $(foreach module,$(modules),$(srcdir)/$(module))
-+module_dir = $(FINAL_TARGET)/modules/services-identity
-+
-+TEST_DIRS += tests
-+
-+include $(topsrcdir)/config/rules.mk
-+
-+libs::
-+	$(NSINSTALL) -D $(module_dir)
-+	$(NSINSTALL) -R $(source_modules) $(module_dir)
-diff --git a/services/identity/browserid.js b/services/identity/browserid.js
-new file mode 100644
---- /dev/null
-+++ b/services/identity/browserid.js
++++ b/services/aitc/modules/browserid.js
 @@ -0,0 +1,450 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -82,14 +21,14 @@ new file mode 100644
 +Cu.import("resource://services-common/log4moz.js");
 +Cu.import("resource://services-common/preferences.js");
 +
-+const PREFS = new Preferences("identity.browserid.");
++const PREFS = new Preferences("services.aitc.browserid.");
 +
 +/**
 + * This implementation will be replaced with native crypto and assertion
 + * generation goodness. See bug 753238. 
 + */
 +function BrowserIDService() {
-+  this._log = Log4Moz.repository.getLogger("Identity.BrowserID");
++  this._log = Log4Moz.repository.getLogger("Services.BrowserID");
 +  this._log.level = Log4Moz.Level[PREFS.get("log")];
 +}
 +BrowserIDService.prototype = {
@@ -518,35 +457,29 @@ new file mode 100644
 +  return new BrowserIDService();
 +});
 \ No newline at end of file
-diff --git a/services/identity/identity-common.js b/services/identity/identity-common.js
-new file mode 100644
---- /dev/null
-+++ b/services/identity/identity-common.js
-@@ -0,0 +1,2 @@
-+pref("identity.browserid.log", "Debug");
-+pref("identity.browserid.url", "https://browserid.org/sign_in");
+diff --git a/services/aitc/services-aitc.js b/services/aitc/services-aitc.js
+--- a/services/aitc/services-aitc.js
++++ b/services/aitc/services-aitc.js
+@@ -1,2 +1,5 @@
++pref("services.aitc.browserid.url", "https://browserid.org/sign_in");
++pref("services.aitc.browserid.log.level", "Debug");
+ pref("services.aitc.client.log.level", "Debug");
+-pref("services.aitc.storage.log.level", "Debug");
 \ No newline at end of file
-diff --git a/services/identity/tests/Makefile.in b/services/identity/tests/Makefile.in
-new file mode 100644
---- /dev/null
-+++ b/services/identity/tests/Makefile.in
-@@ -0,0 +1,25 @@
-+# This Source Code Form is subject to the terms of the Mozilla Public
-+# License, v. 2.0. If a copy of the MPL was not distributed with this file,
-+# You can obtain one at http://mozilla.org/MPL/2.0/.
++pref("services.aitc.storage.log.level", "Debug");
 +
-+DEPTH          = ../../..
-+topsrcdir      = @top_srcdir@
-+srcdir         = @srcdir@
-+VPATH          = @srcdir@
-+relativesrcdir = services/identity/tests
-+
-+include $(DEPTH)/config/autoconf.mk
-+
-+MODULE = test_services_identity
-+XPCSHELL_TESTS = unit
-+
-+include $(topsrcdir)/config/rules.mk
+diff --git a/services/aitc/tests/Makefile.in b/services/aitc/tests/Makefile.in
+--- a/services/aitc/tests/Makefile.in
++++ b/services/aitc/tests/Makefile.in
+@@ -9,8 +9,17 @@ VPATH     = @srcdir@
+ relativesrcdir = services/aitc/tests
+ 
+ include $(DEPTH)/config/autoconf.mk
+ 
+ MODULE = test_services_aitc
+ XPCSHELL_TESTS = unit
+ 
+ include $(topsrcdir)/config/rules.mk
 +
 +_BROWSER_FILES = \
 +  head.js \
@@ -556,10 +489,10 @@ new file mode 100644
 +
 +libs:: $(_BROWSER_FILES)
 +	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/browser/$(relativesrcdir)
-diff --git a/services/identity/tests/browser_id_simple.js b/services/identity/tests/browser_id_simple.js
+diff --git a/services/aitc/tests/browser_id_simple.js b/services/aitc/tests/browser_id_simple.js
 new file mode 100644
 --- /dev/null
-+++ b/services/identity/tests/browser_id_simple.js
++++ b/services/aitc/tests/browser_id_simple.js
 @@ -0,0 +1,44 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -605,10 +538,10 @@ new file mode 100644
 +
 +  finish();
 +}
-diff --git a/services/identity/tests/file_browser_id_mock.html b/services/identity/tests/file_browser_id_mock.html
+diff --git a/services/aitc/tests/file_browser_id_mock.html b/services/aitc/tests/file_browser_id_mock.html
 new file mode 100644
 --- /dev/null
-+++ b/services/identity/tests/file_browser_id_mock.html
++++ b/services/aitc/tests/file_browser_id_mock.html
 @@ -0,0 +1,52 @@
 +<html>
 +<head>
@@ -663,20 +596,20 @@ new file mode 100644
 +</script>
 +</html>
 \ No newline at end of file
-diff --git a/services/identity/tests/head.js b/services/identity/tests/head.js
+diff --git a/services/aitc/tests/head.js b/services/aitc/tests/head.js
 new file mode 100644
 --- /dev/null
-+++ b/services/identity/tests/head.js
++++ b/services/aitc/tests/head.js
 @@ -0,0 +1,23 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
 +
 +let tmp = {};
 +Components.utils.import("resource://gre/modules/Services.jsm");
-+Components.utils.import("resource://services-identity/browserid.js", tmp);
++Components.utils.import("resource://services-aitc/browserid.js", tmp);
 +
 +const BrowserID = tmp.BrowserID;
-+const testPath = "http://mochi.test:8888/browser/services/identity/tests/";
++const testPath = "http://mochi.test:8888/browser/services/aitc/tests/";
 +
 +function loadURL(aURL, aCB) {
 +  gBrowser.selectedBrowser.addEventListener("load", function () {
@@ -689,137 +622,21 @@ new file mode 100644
 +
 +function setEndpoint(name) {
 +  let fullPath = testPath + "file_" + name + ".html";
-+  Services.prefs.setCharPref("identity.browserid.url", fullPath);
++  Services.prefs.setCharPref("services.aitc.browserid.url", fullPath);
 +}
 \ No newline at end of file
-diff --git a/services/identity/tests/unit/head_global.js b/services/identity/tests/unit/head_global.js
-new file mode 100644
---- /dev/null
-+++ b/services/identity/tests/unit/head_global.js
-@@ -0,0 +1,49 @@
-+/* Any copyright is dedicated to the Public Domain.
-+ * http://creativecommons.org/publicdomain/zero/1.0/ */
-+
-+// This has the side-effect of populating Cc, Ci, Cu, Cr. It's best not to
-+// ask questions and just accept it.
-+do_load_httpd_js();
-+const Cm = Components.manager;
-+
-+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-+
-+let XULAppInfo = {
-+  vendor: "Mozilla",
-+  name: "XPCShell",
-+  ID: "xpcshell@tests.mozilla.org",
-+  version: "1",
-+  appBuildID: "20100621",
-+  platformVersion: "",
-+  platformBuildID: "20100621",
-+  inSafeMode: false,
-+  logConsoleErrors: true,
-+  OS: "XPCShell",
-+  XPCOMABI: "noarch-spidermonkey",
-+  QueryInterface: XPCOMUtils.generateQI([Ci.nsIXULAppInfo, Ci.nsIXULRuntime]),
-+  invalidateCachesOnRestart: function invalidateCachesOnRestart() { }
-+};
-+
-+let XULAppInfoFactory = {
-+  createInstance: function (outer, iid) {
-+    if (outer != null)
-+      throw Cr.NS_ERROR_NO_AGGREGATION;
-+    return XULAppInfo.QueryInterface(iid);
-+  }
-+};
-+
-+let registrar = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
-+registrar.registerFactory(Components.ID("{fbfae60b-64a4-44ef-a911-08ceb70b9f31}"),
-+                          "XULAppInfo", "@mozilla.org/xre/app-info;1",
-+                          XULAppInfoFactory);
-+
-+function addResourceAlias() {
-+  Cu.import("resource://gre/modules/Services.jsm");
-+  const handler = Services.io.getProtocolHandler("resource")
-+                  .QueryInterface(Ci.nsIResProtocolHandler);
-+
-+  let uri = Services.io.newURI("resource:///modules/services-identity/", null,
-+                               null);
-+  handler.setSubstitution("services-identity", uri);
-+}
-+addResourceAlias();
-diff --git a/services/identity/tests/unit/test_load_modules.js b/services/identity/tests/unit/test_load_modules.js
-new file mode 100644
---- /dev/null
-+++ b/services/identity/tests/unit/test_load_modules.js
-@@ -0,0 +1,14 @@
-+/* This Source Code Form is subject to the terms of the Mozilla Public
-+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
-+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
-+
-+const modules = [
+diff --git a/services/aitc/tests/unit/test_load_modules.js b/services/aitc/tests/unit/test_load_modules.js
+--- a/services/aitc/tests/unit/test_load_modules.js
++++ b/services/aitc/tests/unit/test_load_modules.js
+@@ -1,10 +1,11 @@
+ const modules = [
+   "client.js",
 +  "browserid.js",
-+];
-+
-+function run_test() {
-+  for each (let m in modules) {
-+    let resource = "resource://services-identity/" + m;
-+    Components.utils.import(resource, {});
-+  }
-+}
-diff --git a/services/identity/tests/unit/xpcshell.ini b/services/identity/tests/unit/xpcshell.ini
-new file mode 100644
---- /dev/null
-+++ b/services/identity/tests/unit/xpcshell.ini
-@@ -0,0 +1,6 @@
-+[DEFAULT]
-+head = head_global.js
-+tail =
-+
-+# Test load modules first so syntax failures are caught early.
-+[test_load_modules.js]
-\ No newline at end of file
-diff --git a/services/makefiles.sh b/services/makefiles.sh
---- a/services/makefiles.sh
-+++ b/services/makefiles.sh
-@@ -35,19 +35,21 @@
- #
- # ***** END LICENSE BLOCK *****
+   "storage.js"
+ ];
  
- add_makefiles "
-   services/Makefile
-   services/common/Makefile
-   services/crypto/Makefile
-   services/crypto/component/Makefile
-+  services/identity/Makefile
-   services/sync/Makefile
-   services/sync/locales/Makefile
- "
- 
- if [ "$ENABLE_TESTS" ]; then
-   add_makefiles "
-     services/common/tests/Makefile
-     services/crypto/tests/Makefile
-+    services/identity/tests/Makefile
-     services/sync/tests/Makefile
-   "
- fi
-diff --git a/testing/xpcshell/xpcshell.ini b/testing/xpcshell/xpcshell.ini
---- a/testing/xpcshell/xpcshell.ini
-+++ b/testing/xpcshell/xpcshell.ini
-@@ -66,16 +66,17 @@ skip-if = os == "android"
- [include:gfx/tests/unit/xpcshell.ini]
- [include:widget/tests/unit/xpcshell.ini]
- [include:content/base/test/unit/xpcshell.ini]
- [include:content/test/unit/xpcshell.ini]
- [include:toolkit/components/url-classifier/tests/unit/xpcshell.ini]
- [include:services/common/tests/unit/xpcshell.ini]
- [include:services/crypto/tests/unit/xpcshell.ini]
- [include:services/crypto/components/tests/unit/xpcshell.ini]
-+[include:services/identity/tests/unit/xpcshell.ini]
- [include:services/sync/tests/unit/xpcshell.ini]
- # Bug 676978: tests hang on Android 
- skip-if = os == "android"
- [include:browser/components/dirprovider/tests/unit/xpcshell.ini]
- [include:browser/components/downloads/test/unit/xpcshell.ini]
- [include:browser/components/feeds/test/unit/xpcshell.ini]
- [include:browser/components/migration/tests/unit/xpcshell.ini]
- [include:browser/components/places/tests/unit/xpcshell.ini]
+ function run_test() {
+   for each (let m in modules) {
+     Cu.import("resource://services-aitc/" + m, {});
+   }
+ }

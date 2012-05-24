@@ -1,14 +1,14 @@
 # HG changeset patch
-# Parent 7039a57ca4f85e0b8003347e7c5d08cd29d7bcea
+# Parent ef9ecb5fcda88850da6f5f31e7a8e4f01966e04b
 
-diff --git a/services/identity/tests/Makefile.in b/services/identity/tests/Makefile.in
---- a/services/identity/tests/Makefile.in
-+++ b/services/identity/tests/Makefile.in
-@@ -10,16 +10,21 @@ relativesrcdir = services/identity/tests
+diff --git a/services/aitc/tests/Makefile.in b/services/aitc/tests/Makefile.in
+--- a/services/aitc/tests/Makefile.in
++++ b/services/aitc/tests/Makefile.in
+@@ -10,16 +10,21 @@ relativesrcdir = services/aitc/tests
  
  include $(DEPTH)/config/autoconf.mk
  
- MODULE = test_services_identity
+ MODULE = test_services_aitc
  XPCSHELL_TESTS = unit
  
  include $(topsrcdir)/config/rules.mk
@@ -26,10 +26,10 @@ diff --git a/services/identity/tests/Makefile.in b/services/identity/tests/Makef
  
  libs:: $(_BROWSER_FILES)
  	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/browser/$(relativesrcdir)
-diff --git a/services/identity/tests/browser_id_1_fresh.js b/services/identity/tests/browser_id_1_fresh.js
+diff --git a/services/aitc/tests/browser_id_1_fresh.js b/services/aitc/tests/browser_id_1_fresh.js
 new file mode 100644
 --- /dev/null
-+++ b/services/identity/tests/browser_id_1_fresh.js
++++ b/services/aitc/tests/browser_id_1_fresh.js
 @@ -0,0 +1,69 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -101,10 +101,10 @@ new file mode 100644
 +  finish();
 +}
 \ No newline at end of file
-diff --git a/services/identity/tests/browser_id_2_login.js b/services/identity/tests/browser_id_2_login.js
+diff --git a/services/aitc/tests/browser_id_2_login.js b/services/aitc/tests/browser_id_2_login.js
 new file mode 100644
 --- /dev/null
-+++ b/services/identity/tests/browser_id_2_login.js
++++ b/services/aitc/tests/browser_id_2_login.js
 @@ -0,0 +1,52 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -159,10 +159,10 @@ new file mode 100644
 +  finish();
 +}
 \ No newline at end of file
-diff --git a/services/identity/tests/browser_id_3_default.js b/services/identity/tests/browser_id_3_default.js
+diff --git a/services/aitc/tests/browser_id_3_default.js b/services/aitc/tests/browser_id_3_default.js
 new file mode 100644
 --- /dev/null
-+++ b/services/identity/tests/browser_id_3_default.js
++++ b/services/aitc/tests/browser_id_3_default.js
 @@ -0,0 +1,26 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -191,10 +191,10 @@ new file mode 100644
 +  finish();
 +}
 \ No newline at end of file
-diff --git a/services/identity/tests/browser_id_4_emailas.js b/services/identity/tests/browser_id_4_emailas.js
+diff --git a/services/aitc/tests/browser_id_4_emailas.js b/services/aitc/tests/browser_id_4_emailas.js
 new file mode 100644
 --- /dev/null
-+++ b/services/identity/tests/browser_id_4_emailas.js
++++ b/services/aitc/tests/browser_id_4_emailas.js
 @@ -0,0 +1,27 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -224,17 +224,17 @@ new file mode 100644
 +  finish();
 +}
 \ No newline at end of file
-diff --git a/services/identity/tests/head.js b/services/identity/tests/head.js
---- a/services/identity/tests/head.js
-+++ b/services/identity/tests/head.js
+diff --git a/services/aitc/tests/head.js b/services/aitc/tests/head.js
+--- a/services/aitc/tests/head.js
++++ b/services/aitc/tests/head.js
 @@ -3,21 +3,50 @@
  
  let tmp = {};
  Components.utils.import("resource://gre/modules/Services.jsm");
- Components.utils.import("resource://services-identity/browserid.js", tmp);
+ Components.utils.import("resource://services-aitc/browserid.js", tmp);
  
  const BrowserID = tmp.BrowserID;
- const testPath = "http://mochi.test:8888/browser/services/identity/tests/";
+ const testPath = "http://mochi.test:8888/browser/services/aitc/tests/";
  
 +const google = "http://www.google.com/";
 +const dashboard = "https://myapps.mozillalabs.com/";
@@ -255,7 +255,7 @@ diff --git a/services/identity/tests/head.js b/services/identity/tests/head.js
  
  function setEndpoint(name) {
    let fullPath = testPath + "file_" + name + ".html";
-   Services.prefs.setCharPref("identity.browserid.url", fullPath);
+   Services.prefs.setCharPref("services.aitc.browserid.url", fullPath);
 +}
 +
 +function parseAssertion(assertion) {

@@ -1,8 +1,8 @@
-browserid
-browserid-test
 aitc
 aitc-storage
+aitc-browserid
 aitc-manager
 mockserver
 mockserver-test
 aitc-mockserver-test
+browserid-extra-tests
