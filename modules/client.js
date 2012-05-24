@@ -4,7 +4,7 @@
 
 "use strict";
 
-const EXPORTED_SYMBOLS = ['AitcClient'];
+const EXPORTED_SYMBOLS = ["AitcClient"];
 
 const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
@@ -14,21 +14,28 @@ Cu.import("resource://services-common/rest.js");
 Cu.import("resource://services-common/utils.js");
 Cu.import("resource://services-crypto/utils.js");
 
-const PREFS = new Preferences("services.aitc.client.");
-
-function AitcClient(token) {
+/**
+ * First argument is a token as returned by CommonUtils.TokenServerClient.
+ * Second argument is a key-value store object that exposes two methods:
+ *   set(key, value);     Sets the value of a given key
+ *   get(key, default);   Returns the value of key, if it doesn't exist,
+ *                        return default
+ * The values should be stored persistently. The Preferences object from
+ * services-common/preferences.js is an example of such an object.
+ */
+function AitcClient(token, state) {
   this.uri = token.endpoint.replace(/\/+$/, "");
   this.token = {id: token.id, key: token.key};
 
   this._log = Log4Moz.repository.getLogger("Service.AITC.Client");
-  this._log.level = Log4Moz.Level[PREFS.get("log.level")];
+  this._log.level = Log4Moz.Level[
+    Preferences.get("services.aitc.client.log.level")
+  ];
   
-  this._backoff = false;
-  if (PREFS.get("backoff", 0)) {
-    this._backoff = true;
-  }
+  this._state = state;
+  this._backoff = !!state.get("backoff", false);
 
-  this._appsLastModified = null;
+  this._appsLastModified = parseInt(state.get("lastModified", "0"), 10);
   this._log.info("Client initialized with token endpoint: " + this.uri);
 }
 AitcClient.prototype = {
@@ -80,7 +87,7 @@ AitcClient.prototype = {
       throw new Error("getApps called but no callback provided");
     }
 
-    if (!this._checkBackoff()) {
+    if (!this._isRequestAllowed()) {
       cb(null, null);
       return;
     }
@@ -88,51 +95,63 @@ AitcClient.prototype = {
     let uri = this.uri + "/apps/?full=1";
     let req = new TokenAuthenticatedRESTRequest(uri, this.token);
     if (this._appsLastModified) {
-      req.setHeader("x-if-modified-since", this._appsLastModified);
+      req.setHeader("X-If-Modified-Since", this._appsLastModified);
     }
 
     let self = this;
-    req.get(function(error) {
-      if (error) {
-        self._log.error("getApps request error " + error);
-        cb(error, null);
-        return;
-      }
-
-      // Set X-Backoff or Retry-After, if needed
-      self._setBackoff(req);
-      
-      // Process response
-      if (req.response.status == 304) {
-        self._log.info("getApps returned 304");
-        cb(null, null);
-        return;
-      }
-      if (req.response.status != 200) {
-        self._error(req);
-        cb(new Error("Unexpected error with getApps"), null);
-        return;
-      }
-
-      try {
-        let tmp = JSON.parse(req.response.body);
-        tmp = tmp["apps"];
-
-        // Convert apps from remote to local format
-        let apps = [];
-        for each (let app in tmp) {
-          apps.push(self._makeLocalApp(app));
-        }
-
-        self._log.info("getApps succeeded and got " + apps.length);
-        cb(null, apps);
-
-        // Don't update lastModified until we know cb succeeded.
-        self._appsLastModified = parseInt(req.response.headers['x-timestamp']);
-      } catch (e) {
-        self._log.error("Exception in getApps " + e);
-      }
+    req.get(function(err) {
+      self._processGetApps(err, cb);
     });
+  },
+
+  /**
+   * GET request returned from getApps, process.
+   */
+  _processGetApps: function _processGetApps(error, cb) {
+    if (error) {
+      this._log.error("getApps request error " + error);
+      cb(error, null);
+      return;
+    }
+
+    // Set X-Backoff or Retry-After, if needed.
+    this._setBackoff(req);
+    
+    // Process response.
+    if (req.response.status == 304) {
+      this._log.info("getApps returned 304");
+      cb(null, null);
+      return;
+    }
+    if (req.response.status != 200) {
+      this._error(req);
+      cb(new Error("Unexpected error with getApps"), null);
+      return;
+    }
+
+    let apps = [];
+    try {
+      let tmp = JSON.parse(req.response.body);
+      tmp = tmp["apps"];
+      // Convert apps from remote to local format.
+      apps = tmp.map(this._makeLocalApp, this);
+      this._log.info("getApps succeeded and got " + apps.length);
+    } catch (e) {
+      let err = new Error("Exception in getApps " + e);
+      this._log.error(err);
+      cb(err, null);
+      return;
+    }
+    
+    // Return success.
+    try {
+      cb(null, apps);
+      // Don't update lastModified until we know cb succeeded.
+      this._appsLastModified = parseInt(req.response.headers["X-Timestamp"]);
+      this._state.put("lastModified", ""  + this._appsLastModified);
+    } catch (e) {
+      this._log("Exception in getApps callback " + e);
+    }
   },
 
   /**
@@ -142,7 +161,7 @@ AitcClient.prototype = {
    */
   _makeRemoteApp: function _makeRemoteApp(app) {
     for each (let key in this.requiredLocalKeys) {
-      if (!app[key]) {
+      if (!(key in app)) {
         throw new Error("Local app missing key " + key);
       }
     }
@@ -168,7 +187,7 @@ AitcClient.prototype = {
    */
   _makeLocalApp: function _makeLocalApp(app) {
     for each (let key in this._requiredRemoteKeys) {
-      if (!app[key]) {
+      if (!(key in app)) {
         throw new Error("Remote app missing key " + key);
       }
     }
@@ -192,61 +211,67 @@ AitcClient.prototype = {
    * if it fails.
    */
   _putApp: function _putApp(app, cb) {
-    if (!this._checkBackoff) {
+    if (!this._isRequestAllowed()) {
       // PUT requests may qualify as the "minimum number of additional requests
       // required to maintain consistency of their stored data". However, it's
       // better to keep server load low, even if it means user's apps won't
       // reach their other devices during the early days of AITC. We should
       // revisit this when we have a better of idea of server load curves.
       err = new Error("X-Backoff in effect, aborting PUT");
-      err.removeFromQueue = false;
+      err.processed = false;
       cb(err, null);
       return;
     }
 
     let uri = this._makeAppURI(app.origin);
     let req = new TokenAuthenticatedRESTRequest(uri, this.token);
-    if (app.modified) {
-      req.setHeader("X-If-Unmodified-Since", app.modified);
+    if (app.modifiedAt) {
+      req.setHeader("X-If-Unmodified-Since", "" + app.modified);
     }
 
     let self = this;
     this._log.info("Trying to _putApp to " + uri);
-    req.put(JSON.stringify(app), function _tryPuttingAppFinished(error) {
-      if (error) {
-        self._log.error("_putApp request error " + error);
-        cb(error, null);
-        return;
-      }
-
+    req.put(JSON.stringify(app), function(err) {
       self._setBackoff(req);
-
-      let err = null;
-      switch (req.response.status) {
-        case 201:
-        case 204:
-          self._log.info("_putApp succeeded");
-          cb(null, true);
-          break;
-
-        case 400:
-        case 412:
-        case 413:
-          let msg = "_putApp returned: " + req.response.status;
-          self._log.warn(msg);
-          err = new Error(msg);
-          err.removeFromQueue = true;
-          cb(err, null);
-          break;
-
-        default:
-          self._error(req);
-          err = new Error("Unexpected error with _putApp");
-          err.removeFromQueue = false;
-          cb(err, null);
-          break;
-      }
+      self._processPutApp(err, cb);
     });
+  },
+
+  /**
+   * PUT from _putApp finished, process.
+   */
+  _processPutApp: function _processPutApp(error, cb) {
+    if (error) {
+      this._log.error("_putApp request error " + error);
+      cb(error, null);
+      return;
+    }
+
+    let err = null;
+    switch (req.response.status) {
+      case 201:
+      case 204:
+        this._log.info("_putApp succeeded");
+        cb(null, true);
+        break;
+
+      case 400:
+      case 412:
+      case 413:
+        let msg = "_putApp returned: " + req.response.status;
+        this._log.warn(msg);
+        err = new Error(msg);
+        err.processed = true;
+        cb(err, null);
+        break;
+
+      default:
+        this._error(req);
+        err = new Error("Unexpected error with _putApp");
+        err.processed = false;
+        cb(err, null);
+        break;
+    }
   },
 
   /**
@@ -259,46 +284,46 @@ AitcClient.prototype = {
 
   _makeAppURI: function _makeAppURI(origin) {
     let part = CommonUtils.encodeBase64URL(
-      CryptoUtils._sha1(origin)
-    ).replace(/=/, "");
+      CryptoUtils.UTF8AndSHA1(origin)
+    ).replace("=", "");
     return this.uri + "/apps/" + part;
   },
 
   // Before making a request, check if we are allowed to.
-  _checkBackoff: function _checkBackoff() {
+  _isRequestAllowed: function _isRequestAllowed() {
     if (!this._backoff) {
       return true;
     }
 
-    let time = new Date().getTime();
-    let lastReq = parseInt(PREFS.get("lastReq", 0));
-    let backoff = parseInt(PREFS.get("backoff", 0));
+    let time = Date.now();
+    let backoff = parseInt(this._state.get("backoff", 0), 10);
 
-    if (lastReq + (backoff * 1000) < time) {
-      this._log.warn("X-Backoff is " + backoff + ", not making request");
+    if (time < backoff) {
+      this._log.warn(backoff - time + " left for backoff, not making request");
       return false;
     }
 
     this._backoff = false;
-    PREFS.set("backoff", "0");
+    this._state.set("backoff", "0");
     return true;
   },
 
   // Set values from X-Backoff and Retry-After headers, if present
   _setBackoff: function _setBackoff(req) {
     let backoff = 0;
-    let time = new Date().getTime();
-    PREFS.set("lastReq", time + "");
+    let time = Date.now();
 
-    if (req.response.headers['x-backoff']) {
-      backoff = req.response.headers['x-backoff'];
+    if (req.response.headers["X-Backoff"]) {
+      backoff = parseInt(req.response.headers["X-Backoff"], 10);
+      this._log.warn("X-Backoff header was seen: " + backoff);
     }
-    if (req.response.headers['retry-after']) {
-      backoff = req.response.headers['retry-after'];
+    if (req.response.headers["Retry-After"]) {
+      backoff = parseInt(req.response.headers["Retry-After"], 10);
+      this._log.warn("Retry-Header header was seen: " + backoff);
     }
     if (backoff) {
       this._backoff = true;
-      PREFS.set("backoff", backoff + "");
+      this._state.set("backoff", "" + (time + (backoff * 1000)));
     }
   },
 };

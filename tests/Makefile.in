@@ -14,3 +14,17 @@ MODULE = test_services_aitc
 XPCSHELL_TESTS = unit
 
 include $(topsrcdir)/config/rules.mk
+
+# Number the test files because order is very important!
+_BROWSER_FILES = \
+  head.js \
+  browser_id_1_fresh.js \
+  browser_id_2_login.js \
+  browser_id_3_default.js \
+  browser_id_4_emailas.js \
+  browser_id_simple.js \
+  file_browser_id_mock.html \
+  $(NULL)
+
+libs:: $(_BROWSER_FILES)
+	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/browser/$(relativesrcdir)

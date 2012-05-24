@@ -13,14 +13,14 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://services-common/log4moz.js");
 Cu.import("resource://services-common/preferences.js");
 
-const PREFS = new Preferences("identity.browserid.");
+const PREFS = new Preferences("services.aitc.browserid.");
 
 /**
  * This implementation will be replaced with native crypto and assertion
  * generation goodness. See bug 753238. 
  */
 function BrowserIDService() {
-  this._log = Log4Moz.repository.getLogger("Identity.BrowserID");
+  this._log = Log4Moz.repository.getLogger("Services.BrowserID");
   this._log.level = Log4Moz.Level[PREFS.get("log")];
 }
 BrowserIDService.prototype = {

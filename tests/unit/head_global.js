@@ -1,10 +1,15 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
-// This has the side-effect of populating Cc, Ci, Cu, Cr. It's best not to
-// ask questions and just accept it.
-do_load_httpd_js();
 const Cm = Components.manager;
+
+// Where to bind test HTTP servers to.
+const TEST_SERVER_URL = "http://localhost:8080/";
+
+// This has the side-effect of populating Cc, Ci, Cu, Cr.
+do_load_httpd_js();
+
+let gSyncProfile = do_get_profile();
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
@@ -42,8 +47,11 @@ function addResourceAlias() {
   const handler = Services.io.getProtocolHandler("resource")
                   .QueryInterface(Ci.nsIResProtocolHandler);
 
-  let uri = Services.io.newURI("resource:///modules/services-identity/", null,
-                               null);
-  handler.setSubstitution("services-identity", uri);
+  let modules = ["aitc", "common"];
+  for each (let module in modules) {
+    let uri = Services.io.newURI("resource:///modules/services-" + module + "/",
+                                 null, null);
+    handler.setSubstitution("services-" + module, uri);
+  }
 }
 addResourceAlias();

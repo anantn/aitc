@@ -70,16 +70,22 @@ AitcQueue.prototype = {
 
     let self = this;
     this._queue.push(obj);
-    this._putFile(this._queue, function _enqueuePutFile(err) {
-      if (!err) {
-        // Successful write.
-        cb(null, true);
-        return;
-      }
-      // Write unsuccessful, don't add to queue.
+
+    try {
+      this._putFile(this._queue, function _enqueuePutFile(err) {
+        if (!err) {
+          // Successful write.
+          cb(null, true);
+          return;
+        }
+        // Write unsuccessful, don't add to queue.
+        self._queue.pop();
+        cb(new Error(err), false);
+      });
+    } catch (e) {
       self._queue.pop();
-      cb(new Error(err), false);
-    });
+      cb(e, false);
+    }    
   },
 
   /**
@@ -97,22 +103,28 @@ AitcQueue.prototype = {
 
     let self = this;
     let obj = this._queue.shift();
-    this._putFile(this._queue, function _dequeuePutFile(err) {
-      if (!err) {
-        // Successful write.
-        cb(null, true);
-        return;
-      }
-      // Unsuccessful write, put back in queue.
+
+    try {
+      this._putFile(this._queue, function _dequeuePutFile(err) {
+        if (!err) {
+          // Successful write.
+          cb(null, true);
+          return;
+        }
+        // Unsuccessful write, put back in queue.
+        self._queue.unshift(obj);
+        cb(err, false);
+      });
+    } catch (e) {
       self._queue.unshift(obj);
-      cb(err, false);
-    });
+      cb(e, false);
+    }
   },
 
   /**
    * Return the object at the front of the queue without removing it.
    */
-  peek: function peek(cb) {
+  peek: function peek() {
     if (!this._queue.length) {
       throw new Error("Queue is empty");
     }
@@ -202,14 +214,10 @@ AitcQueue.prototype = {
  */
 function AitcStorageImpl() {
   this._log = Log4Moz.repository.getLogger("Service.AITC.Storage");
-  /*this._log.level = Log4Moz.Level[Preferences.get(
+  this._log.level = Log4Moz.Level[Preferences.get(
     "services.aitc.storage.log.level"
-  )];*/
+  )];
   this._log.info("Loading AitC storage module");
-
-  this._file = FileUtils.getFile(
-    "ProfD", ["webapps", "webapps-pending.json"], true
-  );
 }
 AitcStorageImpl.prototype = {
   /**
@@ -244,7 +252,7 @@ AitcStorageImpl.prototype = {
     let localApps = {};
     
     // Convert lApps to a dictionary of origin -> app (instead of id -> app).
-    for (let [id, app] in Iterator(localApps)) {
+    for (let [id, app] in Iterator(lApps)) {
       app.id = id;
       toDelete[app.origin] = app;
       localApps[app.origin] = app;
@@ -255,7 +263,9 @@ AitcStorageImpl.prototype = {
     for each (let app in remoteApps) {
       // Don't delete apps that are both local & remote.
       let origin = app.origin;
-      delete toDelete[origin];
+      if (!app.deleted) {
+        delete toDelete[origin];
+      }
 
       // If there is a remote app that isn't local or 
       // if the remote app was installed later.
@@ -270,13 +280,7 @@ AitcStorageImpl.prototype = {
       
       // We should (re)install this app locally
       if (id) {
-        try {          
-          let record = {id: id, value: app};
-          toInstall.push(record);
-        } catch (e) {
-          // App was an invalid record
-          this._log.error("A remote app was found to be invalid " + e);
-        }
+        toInstall.push({id: id, value: app});
       }
     }
 
@@ -296,12 +300,11 @@ AitcStorageImpl.prototype = {
    */
   _applyUpdates: function _applyUpdates(toInstall, toUninstall, callback) {
     let finalCommands = [];
-    let toUpdate = toInstall.length;
 
     let self = this;
     function onManifestsUpdated() {
       if (toUninstall.length) {
-        finalCommands.push(toUninstall);
+        finalCommands = finalCommands.concat(toUninstall);
       }
       if (finalCommands.length) {
         self._log.info(
@@ -316,9 +319,16 @@ AitcStorageImpl.prototype = {
       }
     }
 
-    // Update manifests for all the new remote apps we have.
+    // If no new manifests to fetch, proceed with update.
     let done = 0;
-    for (let j = 0; j < toUpdate; j++) {
+    let total = toInstall.length;
+    if (!total) {
+      onManifestsUpdated();
+      return;
+    }
+
+    // Update manifests for all the new remote apps we have.
+    for (let j = 0; j < total; j++) {
       let app = toInstall[j];
       let url = app.value.manifestURL;
       if (url[0] == "/") {
@@ -338,7 +348,7 @@ AitcStorageImpl.prototype = {
         // Not a big deal if we couldn't get a manifest, we will try to fetch
         // it again in the next cycle. Carry on.
         done += 1;
-        if (done == toUpdate) {
+        if (done == total) {
           onManifestsUpdated();
         }
       });
@@ -350,6 +360,8 @@ AitcStorageImpl.prototype = {
    */
   _getManifest: function _getManifest(url, callback)  {
     let req = new RESTRequest(url);
+
+    let self = this;
     req.get(function(error) {
       if (error) {
         callback(error, null);
@@ -369,14 +381,12 @@ AitcStorageImpl.prototype = {
             "_getManifest got invalid manifest: " + req.response.body
           );
           err = new Error("Invalid manifest fetched");
-          manifest = null;
         }
       } catch (e) {
         self._log.warn(
           "_getManifest got invalid JSON response: " + req.response.body
         );
         err = new Error("Invalid manifest fetched");
-        manifest = null;
       }
 
       callback(err, manifest);

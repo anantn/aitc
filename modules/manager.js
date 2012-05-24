@@ -13,12 +13,12 @@ Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/FileUtils.jsm");
 
 Cu.import("resource://services-aitc/client.js");
+Cu.import("resource://services-aitc/browserid.js");
 Cu.import("resource://services-aitc/storage.js");
 Cu.import("resource://services-common/log4moz.js");
 Cu.import("resource://services-common/preferences.js");
 Cu.import("resource://services-common/tokenserverclient.js");
 Cu.import("resource://services-common/utils.js");
-Cu.import("resource://services-identity/browserid.js");
 
 const PREFS = new Preferences("services.aitc.");
 
@@ -416,7 +416,7 @@ AitcManager.prototype = {
               return;
             }
             processAssertion(val);
-          }, {}, ctxWin);
+          }, ctxWin);
           return;
         }
         self._log.warn("Could not obtain assertion in _makeClient");
