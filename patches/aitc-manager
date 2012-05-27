@@ -158,7 +158,7 @@ diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/manager.js
-@@ -0,0 +1,436 @@
+@@ -0,0 +1,440 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -561,7 +561,11 @@ new file mode 100644
 +          cb(err, null);
 +          return;
 +        }
-+        cb(null, new AitcClient(token));
++
++        // We only create one client instance, store values in a pref tree
++        cb(null, new AitcClient(
++          token, new Preferences("services.aitc.client.")
++        ));
 +      });
 +    }
 +    function gotSilentAssertion(err, val) {

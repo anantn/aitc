@@ -1,11 +1,11 @@
 # HG changeset patch
-# Parent bc9a3a32b4358b9ed27266bc70515ab1b6f522c0
+# Parent 8cf563a575fdba335c3a862fd6da19aedb9965c8
 aitc-client
 
 diff --git a/services/Makefile.in b/services/Makefile.in
 --- a/services/Makefile.in
 +++ b/services/Makefile.in
-@@ -38,12 +38,12 @@
+@@ -6,12 +6,12 @@
  DEPTH     = ..
  topsrcdir = @top_srcdir@
  srcdir    = @srcdir@
@@ -166,17 +166,17 @@ new file mode 100644
 +
 +    let self = this;
 +    req.get(function(err) {
-+      self._processGetApps(err, cb);
++      self._processGetApps(err, cb, req);
 +    });
 +  },
 +
 +  /**
 +   * GET request returned from getApps, process.
 +   */
-+  _processGetApps: function _processGetApps(error, cb) {
-+    if (error) {
-+      this._log.error("getApps request error " + error);
-+      cb(error, null);
++  _processGetApps: function _processGetApps(err, cb, req) {
++    if (err) {
++      this._log.error("getApps request error " + err);
++      cb(err, null);
 +      return;
 +    }
 +
@@ -190,7 +190,7 @@ new file mode 100644
 +      return;
 +    }
 +    if (req.response.status != 200) {
-+      this._error(req);
++      this._log.error(req);
 +      cb(new Error("Unexpected error with getApps"), null);
 +      return;
 +    }
@@ -203,9 +203,9 @@ new file mode 100644
 +      apps = tmp.map(this._makeLocalApp, this);
 +      this._log.info("getApps succeeded and got " + apps.length);
 +    } catch (e) {
-+      let err = new Error("Exception in getApps " + e);
-+      this._log.error(err);
-+      cb(err, null);
++      let msg = new Error("Exception in getApps " + e);
++      this._log.error(msg);
++      cb(msg, null);
 +      return;
 +    }
 +    
@@ -216,7 +216,7 @@ new file mode 100644
 +      this._appsLastModified = parseInt(req.response.headers["X-Timestamp"]);
 +      this._state.put("lastModified", ""  + this._appsLastModified);
 +    } catch (e) {
-+      this._log("Exception in getApps callback " + e);
++      this._log.error("Exception in getApps callback " + e);
 +    }
 +  },
 +
@@ -556,7 +556,7 @@ new file mode 100644
 diff --git a/testing/xpcshell/xpcshell.ini b/testing/xpcshell/xpcshell.ini
 --- a/testing/xpcshell/xpcshell.ini
 +++ b/testing/xpcshell/xpcshell.ini
-@@ -63,16 +63,17 @@ skip-if = os == "android"
+@@ -67,16 +67,17 @@ skip-if = os == "android"
  [include:extensions/cookie/test/unit/xpcshell.ini]
  [include:storage/test/unit/xpcshell.ini]
  [include:rdf/tests/unit/xpcshell.ini]
