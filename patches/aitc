@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 8cf563a575fdba335c3a862fd6da19aedb9965c8
+# Parent 034bbdc7b9c930d95cbba487892ed2262e633a71
 aitc-client
 
 diff --git a/services/Makefile.in b/services/Makefile.in
@@ -214,7 +214,7 @@ new file mode 100644
 +      cb(null, apps);
 +      // Don't update lastModified until we know cb succeeded.
 +      this._appsLastModified = parseInt(req.response.headers["X-Timestamp"]);
-+      this._state.put("lastModified", ""  + this._appsLastModified);
++      this._state.set("lastModified", ""  + this._appsLastModified);
 +    } catch (e) {
 +      this._log.error("Exception in getApps callback " + e);
 +    }
