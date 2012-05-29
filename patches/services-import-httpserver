@@ -1,0 +1,241 @@
+# HG changeset patch
+# Parent 2e756f63a2d82076ba47777aef304ed10203dd41
+# User Gregory Szorc <gps@mozilla.com>
+Bug 757860 - Load JS HTTP server as a module; r=rnewman
+
+diff --git a/netwerk/test/httpserver/httpd.js b/netwerk/test/httpserver/httpd.js
+--- a/netwerk/test/httpserver/httpd.js
++++ b/netwerk/test/httpserver/httpd.js
+@@ -785,17 +785,17 @@
+     delete this._connections[connection.number];
+ 
+     // Fire a pending server-stopped notification if it's our responsibility.
+     if (!this._hasOpenConnections() && this._socketClosed)
+       this._notifyStopped();
+     // Bug 508125: Add a GC here else we'll use gigabytes of memory running
+     // mochitests. We can't rely on xpcshell doing an automated GC, as that
+     // would interfere with testing GC stuff...
+-    Components.utils.gc();
++    Components.utils.forceGC();
+   },
+ 
+   /**
+    * Requests that the server be shut down when possible.
+    */
+   _requestQuit: function()
+   {
+     dumpn(">>> requesting a quit");
+diff --git a/services/common/tests/unit/head_global.js b/services/common/tests/unit/head_global.js
+--- a/services/common/tests/unit/head_global.js
++++ b/services/common/tests/unit/head_global.js
+@@ -1,19 +1,16 @@
+ /* Any copyright is dedicated to the Public Domain.
+  * http://creativecommons.org/publicdomain/zero/1.0/ */
+ 
++const {classes: Cc, interfaces: Ci, results: Cr, utils: Cu, manager: Cm} = Components;
++
+ // Where to bind test HTTP servers to.
+ const TEST_SERVER_URL = "http://localhost:8080/";
+ 
+-// This has the side-effect of populating Cc, Ci, Cu, Cr. It's best not to
+-// ask questions and just accept it.
+-do_load_httpd_js();
+-const Cm = Components.manager;
+-
+ let gSyncProfile = do_get_profile();
+ 
+ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ 
+ let XULAppInfo = {
+   vendor: "Mozilla",
+   name: "XPCShell",
+   ID: "xpcshell@tests.mozilla.org",
+@@ -49,9 +46,9 @@
+ 
+   let modules = ["common", "crypto"];
+   for each (let module in modules) {
+     let uri = Services.io.newURI("resource:///modules/services-" + module + "/",
+                                  null, null);
+     handler.setSubstitution("services-" + module, uri);
+   }
+ }
+-addResourceAlias();
+\ No newline at end of file
++addResourceAlias();
+diff --git a/services/common/tests/unit/head_helpers.js b/services/common/tests/unit/head_helpers.js
+--- a/services/common/tests/unit/head_helpers.js
++++ b/services/common/tests/unit/head_helpers.js
+@@ -1,12 +1,13 @@
+ /* This Source Code Form is subject to the terms of the Mozilla Public
+  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
++Cu.import("resource://testing-common/httpd.js");
+ Cu.import("resource://services-common/log4moz.js");
+ 
+ let btoa = Cu.import("resource://services-common/log4moz.js").btoa;
+ let atob = Cu.import("resource://services-common/log4moz.js").atob;
+ 
+ function do_check_empty(obj) {
+   do_check_attribute_count(obj, 0);
+ }
+@@ -75,17 +76,17 @@
+ }
+ 
+ function getTestLogger(component) {
+   return Log4Moz.repository.getLogger("Testing");
+ }
+ 
+ function httpd_setup (handlers, port) {
+   let port   = port || 8080;
+-  let server = new nsHttpServer();
++  let server = new HttpServer();
+   for (let path in handlers) {
+     server.registerPathHandler(path, handlers[path]);
+   }
+   try {
+     server.start(port);
+   } catch (ex) {
+     _("==========================================");
+     _("Got exception starting HTTP server on port " + port);
+diff --git a/services/common/tests/unit/test_restrequest.js b/services/common/tests/unit/test_restrequest.js
+--- a/services/common/tests/unit/test_restrequest.js
++++ b/services/common/tests/unit/test_restrequest.js
+@@ -581,34 +581,36 @@
+   });
+ });
+ 
+ /**
+  * A non-zero 'timeout' property specifies the amount of seconds to wait after
+  * channel activity until the request is automatically canceled.
+  */
+ add_test(function test_timeout() {
+-  let server = new nsHttpServer();
++  let server = new HttpServer();
+   let server_connection;
+   server._handler.handleResponse = function(connection) {
+     // This is a handler that doesn't do anything, just keeps the connection
+     // open, thereby mimicking a timing out connection. We keep a reference to
+     // the open connection for later so it can be properly disposed of. That's
+     // why you really only want to make one HTTP request to this server ever.
+     server_connection = connection;
+   };
+   server.start(8080);
+ 
+   let request = new RESTRequest(TEST_RESOURCE_URL);
+   request.timeout = 0.1; // 100 milliseconds
+   request.get(function (error) {
+     do_check_eq(error.result, Cr.NS_ERROR_NET_TIMEOUT);
+     do_check_eq(this.status, this.ABORTED);
+ 
++    _("Closing connection.");
+     server_connection.close();
++    _("Shutting down server.");
+     server.stop(run_next_test);
+   });
+ });
+ 
+ /**
+  * An exception thrown in 'onProgress' propagates to the 'onComplete' handler.
+  */
+ add_test(function test_exception_in_onProgress() {
+diff --git a/services/sync/tests/unit/head_http_server.js b/services/sync/tests/unit/head_http_server.js
+--- a/services/sync/tests/unit/head_http_server.js
++++ b/services/sync/tests/unit/head_http_server.js
+@@ -522,29 +522,29 @@
+ };
+ 
+ /**
+  * Construct a new test Sync server. Takes a callback object (e.g.,
+  * SyncServerCallback) as input.
+  */
+ function SyncServer(callback) {
+   this.callback = callback || {__proto__: SyncServerCallback};
+-  this.server   = new nsHttpServer();
++  this.server   = new HttpServer();
+   this.started  = false;
+   this.users    = {};
+   this._log     = Log4Moz.repository.getLogger(SYNC_HTTP_LOGGER);
+ 
+   // Install our own default handler. This allows us to mess around with the
+   // whole URL space.
+   let handler = this.server._handler;
+   handler._handleDefault = this.handleDefault.bind(this, handler);
+ }
+ SyncServer.prototype = {
+   port:   8080,
+-  server: null,    // nsHttpServer.
++  server: null,    // HttpServer.
+   users:  null,    // Map of username => {collections, password}.
+ 
+   /**
+    * Start the SyncServer's underlying HTTP server.
+    *
+    * @param port
+    *        The numeric port on which to start. A falsy value implies the
+    *        default (8080).
+@@ -770,18 +770,18 @@
+     for each (let [header, value] in Iterator(headers || this.defaultHeaders)) {
+       resp.setHeader(header, value);
+     }
+     resp.setHeader("X-Weave-Timestamp", "" + this.timestamp(), false);
+     resp.bodyOutputStream.write(body, body.length);
+   },
+ 
+   /**
+-   * This is invoked by the nsHttpServer. `this` is bound to the SyncServer;
+-   * `handler` is the nsHttpServer's handler.
++   * This is invoked by the HttpServer. `this` is bound to the SyncServer;
++   * `handler` is the HttpServer's handler.
+    *
+    * TODO: need to use the correct Sync API response codes and errors here.
+    * TODO: Basic Auth.
+    * TODO: check username in path against username in BasicAuth. 
+    */
+   handleDefault: function handleDefault(handler, req, resp) {
+     try {
+       this._handleDefault(handler, req, resp);
+diff --git a/services/sync/tests/unit/test_addons_engine.js b/services/sync/tests/unit/test_addons_engine.js
+--- a/services/sync/tests/unit/test_addons_engine.js
++++ b/services/sync/tests/unit/test_addons_engine.js
+@@ -165,17 +165,17 @@
+     addons: {}
+   };
+ 
+   let server = new SyncServer();
+   server.registerUser(USER, "password");
+   server.createContents(USER, contents);
+   server.start();
+ 
+-  let amoServer = new nsHttpServer();
++  let amoServer = new HttpServer();
+   amoServer.registerFile("/search/guid:addon1%40tests.mozilla.org",
+                          do_get_file("addon1-search.xml"));
+ 
+   let installXPI = ExtensionsTestPath("/addons/test_install1.xpi");
+   amoServer.registerFile("/addon1.xpi", do_get_file(installXPI));
+   amoServer.start(8888);
+ 
+   // Insert an existing record into the server.
+diff --git a/services/sync/tests/unit/test_addons_store.js b/services/sync/tests/unit/test_addons_store.js
+--- a/services/sync/tests/unit/test_addons_store.js
++++ b/services/sync/tests/unit/test_addons_store.js
+@@ -37,17 +37,17 @@
+     deleted:       !!deleted,
+     applicationID: Services.appinfo.ID,
+     source:        "amo"
+   };
+ }
+ 
+ function createAndStartHTTPServer(port) {
+   try {
+-    let server = new nsHttpServer();
++    let server = new HttpServer();
+ 
+     let bootstrap1XPI = ExtensionsTestPath("/addons/test_bootstrap1_1.xpi");
+ 
+     server.registerFile("/search/guid:bootstrap1%40tests.mozilla.org",
+                         do_get_file("bootstrap1-search.xml"));
+     server.registerFile("/bootstrap1.xpi", do_get_file(bootstrap1XPI));
+ 
+     server.registerFile("/search/guid:missing-xpi%40tests.mozilla.org",

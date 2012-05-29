@@ -1,3 +1,41 @@
 # HG changeset patch
 # Parent ac0e29f8b8a8f7e91db8d979c0f48c813aa731a4
 
+diff --git a/services/aitc/tests/unit/xpcshell.ini b/services/aitc/tests/unit/xpcshell.ini
+--- a/services/aitc/tests/unit/xpcshell.ini
++++ b/services/aitc/tests/unit/xpcshell.ini
+@@ -1,7 +1,7 @@
+ [DEFAULT]
+-head = head_global.js head_helpers.js
++head = head_global.js ../../../common/tests/unit/head_helpers.js head_helpers.js ../../../common/tests/unit/head_aitc_server.js
+ tail =
+
+ [test_load_modules.js]
+ [test_storage_queue.js]
+ [test_storage_registry.js]
+\ No newline at end of file
+diff --git a/services/aitc/tests/unit/head_global.js b/services/aitc/tests/unit/head_global.js
+--- a/services/aitc/tests/unit/head_global.js
++++ b/services/aitc/tests/unit/head_global.js
+@@ -1,15 +1,18 @@
+ /* Any copyright is dedicated to the Public Domain.
+  * http://creativecommons.org/publicdomain/zero/1.0/ */
+
+-// This has the side-effect of populating Cc, Ci, Cu, Cr. It's best not to
+-// ask questions and just accept it.
++const Cm = Components.manager;
++
++// Where to bind test HTTP servers to.
++const TEST_SERVER_URL = "http://localhost:8080/";
++
++// This has the side-effect of populating Cc, Ci, Cu, Cr.
+ do_load_httpd_js();
+-const Cm = Components.manager;
+
+ let gSyncProfile = do_get_profile();
+
+ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+
+ let XULAppInfo = {
+   vendor: "Mozilla",
+   name: "XPCShell",

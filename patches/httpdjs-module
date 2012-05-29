@@ -1,0 +1,168 @@
+# HG changeset patch
+# Parent 318594b82d704b5b708e35d3a328b8c08b37e4b1
+# User Gregory Szorc <gps@mozilla.com>
+Bug 755196 - Allow httpd.js to be loaded as a testing module
+
+diff --git a/netwerk/test/httpserver/Makefile.in b/netwerk/test/httpserver/Makefile.in
+--- a/netwerk/test/httpserver/Makefile.in
++++ b/netwerk/test/httpserver/Makefile.in
+@@ -1,20 +1,20 @@
+ # vim: noexpandtab ts=8 sw=8
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+ $(warning httpserver XPI_NAME=$(XPI_NAME))
+ 
+-DEPTH		= ../../..
+-topsrcdir	= @top_srcdir@
+-srcdir		= @srcdir@
+-VPATH		= @srcdir@
++DEPTH          = ../../..
++topsrcdir      = @top_srcdir@
++srcdir         = @srcdir@
++VPATH          = @srcdir@
+ relativesrcdir = netwerk/test/httpserver
+ 
+ include $(DEPTH)/config/autoconf.mk
+ 
+ MODULE          = test_necko
+ NO_INTERFACES_MANIFEST = 1
+ 
+ EXTRA_COMPONENTS = \
+@@ -31,9 +31,11 @@
+ endif
+ 
+ XPIDLSRCS       = \
+                   nsIHttpServer.idl \
+                   $(NULL)
+ 
+ XPCSHELL_TESTS = test
+ 
++TESTING_JS_MODULES = httpd.js
++
+ include $(topsrcdir)/config/rules.mk
+diff --git a/netwerk/test/httpserver/httpd.js b/netwerk/test/httpserver/httpd.js
+--- a/netwerk/test/httpserver/httpd.js
++++ b/netwerk/test/httpserver/httpd.js
+@@ -5,16 +5,44 @@
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ /*
+  * An implementation of an HTTP server both as a loadable script and as an XPCOM
+  * component.  See the accompanying README file for user documentation on
+  * httpd.js.
+  */
+ 
++const EXPORTED_SYMBOLS = [
++  "HTTP_400",
++  "HTTP_401",
++  "HTTP_402",
++  "HTTP_403",
++  "HTTP_404",
++  "HTTP_405",
++  "HTTP_406",
++  "HTTP_407",
++  "HTTP_408",
++  "HTTP_409",
++  "HTTP_410",
++  "HTTP_411",
++  "HTTP_412",
++  "HTTP_413",
++  "HTTP_414",
++  "HTTP_415",
++  "HTTP_417",
++  "HTTP_500",
++  "HTTP_501",
++  "HTTP_502",
++  "HTTP_503",
++  "HTTP_504",
++  "HTTP_505",
++  "HttpError",
++  "HttpServer",
++];
++
+ Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
+ 
+ const Cc = Components.classes;
+ const Ci = Components.interfaces;
+ const Cr = Components.results;
+ const Cu = Components.utils;
+ const CC = Components.Constructor;
+ 
+@@ -757,30 +785,31 @@
+     delete this._connections[connection.number];
+ 
+     // Fire a pending server-stopped notification if it's our responsibility.
+     if (!this._hasOpenConnections() && this._socketClosed)
+       this._notifyStopped();
+     // Bug 508125: Add a GC here else we'll use gigabytes of memory running
+     // mochitests. We can't rely on xpcshell doing an automated GC, as that
+     // would interfere with testing GC stuff...
+-    gc();
++    Components.utils.gc();
+   },
+ 
+   /**
+    * Requests that the server be shut down when possible.
+    */
+   _requestQuit: function()
+   {
+     dumpn(">>> requesting a quit");
+     dumpStack();
+     this._doQuit = true;
+   }
+ };
+ 
++var HttpServer = nsHttpServer;
+ 
+ //
+ // RFC 2396 section 3.2.2:
+ //
+ // host        = hostname | IPv4address
+ // hostname    = *( domainlabel "." ) toplabel [ "." ]
+ // domainlabel = alphanum | alphanum *( alphanum | "-" ) alphanum
+ // toplabel    = alpha | alpha *( alphanum | "-" ) alphanum
+diff --git a/netwerk/test/httpserver/test/test_load_module.js b/netwerk/test/httpserver/test/test_load_module.js
+new file mode 100644
+--- /dev/null
++++ b/netwerk/test/httpserver/test/test_load_module.js
+@@ -0,0 +1,16 @@
++/* Any copyright is dedicated to the Public Domain.
++ * http://creativecommons.org/publicdomain/zero/1.0/ */
++
++/**
++ * Ensure httpd.js can be imported as a module and that a server starts.
++ */
++function run_test() {
++  Components.utils.import("resource://testing-common/httpd.js");
++
++  let server = new HttpServer();
++  server.start(8080);
++
++  do_test_pending();
++
++  server.stop(do_test_finished);
++}
+diff --git a/netwerk/test/httpserver/test/xpcshell.ini b/netwerk/test/httpserver/test/xpcshell.ini
+--- a/netwerk/test/httpserver/test/xpcshell.ini
++++ b/netwerk/test/httpserver/test/xpcshell.ini
+@@ -8,16 +8,17 @@
+ [test_byte_range.js]
+ [test_cern_meta.js]
+ [test_default_index_handler.js]
+ [test_empty_body.js]
+ [test_errorhandler_exception.js]
+ [test_header_array.js]
+ [test_headers.js]
+ [test_host.js]
++[test_load_module.js]
+ [test_name_scheme.js]
+ [test_processasync.js]
+ [test_qi.js]
+ [test_registerdirectory.js]
+ [test_registerfile.js]
+ [test_registerprefix.js]
+ [test_request_line_split_in_two_packets.js]
+ [test_response_write.js]

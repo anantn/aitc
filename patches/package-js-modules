@@ -1,0 +1,87 @@
+# HG changeset patch
+# Parent 6ad95e65d74d9113351ca826ab07b8ea227c4703
+# User Gregory Szorc <gps@mozilla.com>
+Bug 755339 - Package testing-only JS modules
+
+diff --git a/testing/testsuite-targets.mk b/testing/testsuite-targets.mk
+--- a/testing/testsuite-targets.mk
++++ b/testing/testsuite-targets.mk
+@@ -265,16 +265,17 @@
+   stage-reftest \
+   stage-xpcshell \
+   stage-jstests \
+   stage-jetpack \
+   stage-firebug \
+   stage-peptest \
+   stage-mozbase \
+   stage-tps \
++  stage-testing-modules \
+   $(NULL)
+ else
+ # This staging area has been built for us by universal/flight.mk
+ PKG_STAGE = $(DIST)/universal/test-package-stage
+ endif
+ 
+ package-tests:
+ 	@rm -f "$(DIST)/$(PKG_PATH)$(TEST_PACKAGE)"
+@@ -287,17 +288,26 @@
+ 	cd $(PKG_STAGE) && \
+ 	  zip -rq9D "$(call core_abspath,$(DIST)/$(PKG_PATH)$(TEST_PACKAGE))" *
+ 
+ ifeq (Android, $(OS_TARGET))
+ package-tests: stage-android
+ endif
+ 
+ make-stage-dir:
+-	rm -rf $(PKG_STAGE) && $(NSINSTALL) -D $(PKG_STAGE) && $(NSINSTALL) -D $(PKG_STAGE)/bin && $(NSINSTALL) -D $(PKG_STAGE)/bin/components && $(NSINSTALL) -D $(PKG_STAGE)/certs && $(NSINSTALL) -D $(PKG_STAGE)/jetpack && $(NSINSTALL) -D $(PKG_STAGE)/firebug && $(NSINSTALL) -D $(PKG_STAGE)/peptest && $(NSINSTALL) -D $(PKG_STAGE)/mozbase && $(NSINSTALL) -D $(PKG_STAGE)/modules
++	rm -rf $(PKG_STAGE)
++	$(NSINSTALL) -D $(PKG_STAGE)
++	$(NSINSTALL) -D $(PKG_STAGE)/bin
++	$(NSINSTALL) -D $(PKG_STAGE)/bin/components
++	$(NSINSTALL) -D $(PKG_STAGE)/certs
++	$(NSINSTALL) -D $(PKG_STAGE)/jetpack
++	$(NSINSTALL) -D $(PKG_STAGE)/firebug
++	$(NSINSTALL) -D $(PKG_STAGE)/peptest
++	$(NSINSTALL) -D $(PKG_STAGE)/mozbase
++	$(NSINSTALL) -D $(PKG_STAGE)/modules
+ 
+ robotium-id-map:
+ ifeq ($(MOZ_BUILD_APP),mobile/android)
+ 	$(PYTHON) $(DEPTH)/build/mobile/robocop/parse_ids.py -i $(DEPTH)/mobile/android/base/R.java -o $(DEPTH)/build/mobile/robocop/fennec_ids.txt
+ endif
+ 
+ stage-mochitest: robotium-id-map
+ stage-mochitest: make-stage-dir
+@@ -331,16 +341,20 @@
+ 	$(MAKE) -C $(DEPTH)/testing/peptest stage-package
+ 
+ stage-tps: make-stage-dir
+ 	$(NSINSTALL) -D $(PKG_STAGE)/tps/tests
+ 	@(cd $(topsrcdir)/testing/tps && tar $(TAR_CREATE_FLAGS) - *) | (cd $(PKG_STAGE)/tps && tar -xf -)
+ 	@(cd $(topsrcdir)/services/sync/tps && tar $(TAR_CREATE_FLAGS) - *) | (cd $(PKG_STAGE)/tps && tar -xf -)
+ 	(cd $(topsrcdir)/services/sync/tests/tps && tar $(TAR_CREATE_FLAGS_QUIET) - *) | (cd $(PKG_STAGE)/tps/tests && tar -xf -)
+ 
++stage-testing-modules: make-stage-dir
++	$(NSINSTALL) -D $(PKG_STAGE)/modules
++	cp -RL $(DEPTH)/_tests/modules $(PKG_STAGE)
++
+ stage-mozbase: make-stage-dir
+ 	$(MAKE) -C $(DEPTH)/testing/mozbase stage-package
+ .PHONY: \
+   mochitest \
+   mochitest-plain \
+   mochitest-chrome \
+   mochitest-a11y \
+   mochitest-ipcplugins \
+@@ -356,10 +370,11 @@
+   stage-xpcshell \
+   stage-jstests \
+   stage-android \
+   stage-jetpack \
+   stage-firebug \
+   stage-peptest \
+   stage-mozbase \
+   stage-tps \
++  stage-testing-modules \
+   $(NULL)
+ 
