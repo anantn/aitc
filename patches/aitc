@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 034bbdc7b9c930d95cbba487892ed2262e633a71
+# Parent 8cf563a575fdba335c3a862fd6da19aedb9965c8
 aitc-client
 
 diff --git a/services/Makefile.in b/services/Makefile.in
@@ -299,14 +299,14 @@ new file mode 100644
 +    this._log.info("Trying to _putApp to " + uri);
 +    req.put(JSON.stringify(app), function(err) {
 +      self._setBackoff(req);
-+      self._processPutApp(err, cb);
++      self._processPutApp(err, cb, req);
 +    });
 +  },
 +
 +  /**
 +   * PUT from _putApp finished, process.
 +   */
-+  _processPutApp: function _processPutApp(error, cb) {
++  _processPutApp: function _processPutApp(error, cb, req) {
 +    if (error) {
 +      this._log.error("_putApp request error " + error);
 +      cb(error, null);

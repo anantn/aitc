@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 3466689c770f0a225e1669d3f70bcbc0133555c1
+# Parent 6de92ad8c312b5b207b7da1bd47d50a3d064da61
 # User Anant Narayanan <anant@kix.in>
 AITC main service & manager
 
@@ -7,7 +7,7 @@ diff --git a/services/aitc/modules/main.js b/services/aitc/modules/main.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/main.js
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,169 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -35,11 +35,16 @@ new file mode 100644
 +
 +  let self = this;
 +  this._manager = new AitcManager(function _managerDone() {
++    self._log.info("Initializing AitC listeners");
 +    self._init();
 +  });
 +}
 +Aitc.prototype = {
-+  get DASHBOARD() {
++  get IDLE_TIMER() {
++    return Preferences.get("services.aitc.main.idleTime");
++  },
++
++  get DASHBOARD_URL() {
 +    return Preferences.get("services.aitc.dashboard.url");
 +  },
 +
@@ -55,7 +60,7 @@ new file mode 100644
 +
 +      // If page is ready to go, fire immediately.
 +      if (win.document && win.document.readyState == "complete") {
-+        self._manager.userOnDashboard(win);
++        self._manager.userActive(win);
 +        return;
 +      } 
 +
@@ -63,7 +68,7 @@ new file mode 100644
 +      browser.contentWindow.addEventListener(
 +        "DOMContentLoaded",
 +        function _contentLoaded(event) {
-+          self._manager.userOnDashboard(win);
++          self._manager.userActive(win);
 +        },
 +        false
 +      );
@@ -72,7 +77,7 @@ new file mode 100644
 +    // This is called when the user's attention is elsewhere.
 +    function dashboardUnloaded() {
 +      self._log.info("Dashboard closed or in background");
-+      self._manager.userOffDashboard();
++      self._manager.userIdle();
 +    }
 +
 +    // Called when a URI is loaded in any tab. We have to listen for this
@@ -83,8 +88,7 @@ new file mode 100644
 +      onLocationChange: function onLocationChange(browser, pr, req, loc, flag) {
 +        let win = Services.wm.getMostRecentWindow("navigator:browser");
 +        if (win.gBrowser.selectedBrowser == browser) {
-+          let uri = loc.spec.substring(0, self.DASHBOARD.length);
-+          if (uri == self.DASHBOARD) {
++          if (loc.prePath == self.DASHBOARD_URL) {
 +            dashboardLoaded(browser);
 +          }
 +        }
@@ -93,8 +97,7 @@ new file mode 100644
 +    // Called when the current tab selection changes.
 +    function tabSelected(event) {
 +      let browser = event.target.linkedBrowser;
-+      let uri = browser.currentURI.spec.substring(0, self.DASHBOARD.length);
-+      if (uri == self.DASHBOARD) {
++      if (browser.currentURI.prePath == self.DASHBOARD_URL) {
 +        dashboardLoaded(browser);
 +      } else {
 +        dashboardUnloaded();
@@ -124,10 +127,10 @@ new file mode 100644
 +      browser.tabContainer.addEventListener("TabSelect", tabSelected);
 +
 +      // Also check the currently open URI.
-+      let uri = browser.contentDocument.location.toString().substring(
-+        0, self.DASHBOARD.length
++      let uri = Services.io.newURI(
++        browser.contentDocument.location.href, null, null
 +      );
-+      if (uri == self.DASHBOARD) {
++      if (uri.prePath == this.DASHBOARD_URL) {
 +        dashboardLoaded(browser);
 +      }
 +    }
@@ -135,6 +138,11 @@ new file mode 100644
 +    // Add listeners for app installs/uninstall.
 +    Services.obs.addObserver(this, "webapps-sync-install", false);
 +    Services.obs.addObserver(this, "webapps-sync-uninstall", false);
++
++    // Add listener for idle service.
++    let idleSvc = Cc["@mozilla.org/widget/idleservice;1"].
++                  getService(Ci.nsIIdleService);
++    idleSvc.addIdleObserver(this, this.IDLE_TIMER);
 +  },
 +
 +  observe: function(aSubject, aTopic, aData) {
@@ -150,15 +158,30 @@ new file mode 100644
 +        this._log.info(app.origin + " was uninstalled, initiating PUT");
 +        this._manager.appEvent("uninstall", app);
 +        break;
++      case "idle":
++        this._log.info("User went idle");
++        if (this._manager) {
++          this._manager.userIdle();
++        }
++        break;
++      case "back":
++        this._log.info("User is no longer idle");
++        let win = Services.wm.getMostRecentWindow("navigator:browser");
++        if (win && this._manager) {
++          if (win.gBrowser.currentURI.prePath == this.DASHBOARD_URL) {
++            this._manager.userActive();
++          }
++        }
++        break;
 +    }
-+  }
++  },
++
 +};
-\ No newline at end of file
 diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/manager.js
-@@ -0,0 +1,440 @@
+@@ -0,0 +1,446 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -219,7 +242,7 @@ new file mode 100644
 +    return PREFS.get("marketplace.url");
 +  },
 +
-+  get DASHBOARD() {
++  get DASHBOARD_URL() {
 +    return PREFS.get("dashboard.url");
 +  },
 +
@@ -259,12 +282,12 @@ new file mode 100644
 +  },
 +
 +  /**
-+   * User is looking at dashboard. Start polling, but if user isn't logged in,
-+   * prompt for them to login via a dialog.
++   * User is looking at dashboard. Start polling actively, but if user isn't
++   * logged in, prompt for them to login via a dialog.
 +   */
-+  userOnDashboard: function userOnDashboard(win) {
++  userActive: function userActive(win) {
 +    if (this._client) {
-+      this._startPoll();
++      this._setPoll("ACTIVE");
 +      return;
 +    }
 +
@@ -280,31 +303,39 @@ new file mode 100644
 +        return;
 +      }
 +      self._client = client;
-+      self._startPoll();
++      self._setPoll("ACTIVE");
 +    }, true, win);
 +  },
 +
 +  /**
-+   * User is not on the dashboard, we may stop polling (though PUTs will
-+   * still continue to be tried).
++   * User is idle, (either by idle observer, or by not being on the dashboard).
++   * When the user is no longer idle and the dashboard is the current active
++   * page, a call to userActive MUST be made.
 +   */
-+  userOffDashboard: function userOffDashboard() {
-+    if (this._client) {
-+      this._stopPoll();
-+      return;
-+    }
++  userIdle: function userIdle() {
++    self._setPoll("PASSIVE");
 +  },
 +
-+  /**
-+   * Poll the AITC server for any changes and process them. Call this whenever
-+   * the user is actively looking at the apps dashboard. It is safe to call
-+   * this function multiple times.
++   /**
++   * Poll the AITC server for any changes and process them. It is safe to call
++   * this function multiple times. Last caller wins.
++   *
++   * Call this whenever the following occurs:
++   *  ACTIVE: User visits dashboard (immediate fetch + timer on ACTIVE_FREQ).
++   *  PASSIVE: User is no longer on the dashboard (timer on IDLE_FREQ).
++   *  PASSIVE: User goes idle (timer on IDLE_FREQ) even if user is on dashboard.
 +   */
-+  _startPoll: function _startPoll() {
-+    if (!this._client) {
-+      throw new Error("_startPoll called without client");
++  _setPoll: function _setPoll(type) {
++    if (type == "ACTIVE" && !this._client) {
++      throw new Error("_setPoll(ACTIVE) called without client");
 +    }
-+    if (this._getTimer) {
++    if (type != "ACTIVE" && type != "PASSIVE") {
++      throw new Error("_setPoll called with invalid argument " + type);
++    }
++
++    if (!this._client) {
++      // User is not logged in, we cannot do anything.
++      self._log.warn("_setPoll called but user not logged in, ignoring");
 +      return;
 +    }
 +
@@ -317,10 +348,22 @@ new file mode 100644
 +      CommonUtils.nextTick(this._checkServer, this);
 +    }
 +
++    // Cancel existing timer, if any.
++    if (this._getTimer) {
++      this._getTimer.cancel();
++      this._getTimer = null;
++    }
++
 +    // Start the timer for GETs. In case there were pending PUTs, _checkServer
 +    // will automatically abort, and we'll retry after getFreq.
++    let getFreq;
++    if (type == "ACTIVE") {
++      getFreq = PREFS.get("manager.getActiveFreq");
++    } else {
++      getFreq = PREFS.get("manager.getPassiveFreq");
++    }
++
 +    let self = this;
-+    let getFreq = PREFS.get("manager.getFreq");
 +    this._log.info("Starting GET timer");
 +    this._getTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
 +    this._getTimer.initWithCallback(
@@ -331,19 +374,6 @@ new file mode 100644
 +      }, getFreq, Ci.nsITimer.TYPE_REPEATING_SLACK
 +    );
 +    this._log.info("GET timer set, next attempt in " + getFreq + "ms");
-+  },
-+
-+  /**
-+   * Stop polling for changes. Call this as soon as the user
-+   * isn't looking at the apps dashboard anymore. It is safe to call
-+   * this function even if runPeriodically() wasn't called before.
-+   */
-+  _stopPoll: function _stopPoll() {
-+    if (!this._getTimer) {
-+      return;
-+    }
-+    this._getTimer.cancel();
-+    this._getTimer = null;
 +  },
 +
 +  /**
@@ -507,30 +537,29 @@ new file mode 100644
 +    let url = this.TOKEN_SERVER + "/1.0/aitc/1.0";
 +    let client = new TokenServerClient();
 +
-+    let self = this;
 +    this._log.info("Obtaining token from " + url);
-+    client.getTokenFromBrowserIDAssertion(url, assertion, function(err, tok) {
-+      if (!err) {
-+        self._log.info("Got token from server: " + JSON.stringify(tok));
-+        cb(null, tok);
-+        return;
-+      }
 +
-+      if (!err.response) {
-+        self._log.error(err);
-+        cb(err, null);
-+        return;
-+      }
-+      if (!err.response.success) {
-+        self._log.error(err);
-+        cb(err, null);
-+        return;
-+      }
++    let self = this;
++    try {
++      client.getTokenFromBrowserIDAssertion(url, assertion, function(err, tok) {
++        self._gotToken(err, tok, cb);
++      });
++    } catch (e) {
++      cb(new Error(e), null);
++    }
++  },
 +
-+      let msg = "Unknown error in _getToken " + err.message;
-+      self._log.error(msg);
-+      cb(new Error(msg), null);
-+    });
++  // Token recieved from _getToken.
++  _gotToken: function _gotToken(err, tok, cb) {
++    if (!err) {
++      this._log.info("Got token from server: " + JSON.stringify(tok));
++      cb(null, tok);
++      return;
++    }
++
++    let msg = err.name + " in _getToken: " + err.error;
++    this._log.error(msg);
++    cb(msg, null);
 +  },
 +
 +  /* To start the AitcClient we need a token, for which we need a BrowserID
@@ -594,7 +623,7 @@ new file mode 100644
 +    // Check if we can get assertion silently first
 +    self._log.info("Attempting to obtain assertion silently")
 +    BrowserID.getAssertion(gotSilentAssertion, {
-+      audience: this.DASHBOARD, sameEmailAs: this.MARKETPLACE
++      audience: this.DASHBOARD_URL, sameEmailAs: this.MARKETPLACE
 +    });
 +  },
 +
@@ -602,8 +631,17 @@ new file mode 100644
 diff --git a/services/aitc/service.js b/services/aitc/service.js
 --- a/services/aitc/service.js
 +++ b/services/aitc/service.js
-@@ -28,17 +28,19 @@ AitcService.prototype = {
-         // Start AITC service after 2000ms, only if classic sync is off.
+@@ -20,25 +20,26 @@ AitcService.prototype = {
+   observe: function observe(subject, topic, data) {
+     switch (topic) {
+       case "app-startup":
+         let os = Cc["@mozilla.org/observer-service;1"]
+                    .getService(Ci.nsIObserverService);
+         os.addObserver(this, "final-ui-startup", true);
+         break;
+       case "final-ui-startup":
+-        // Start AITC service after 2000ms, only if classic sync is off.
++        // Start AITC service only if classic sync is off.
          Cu.import("resource://services-common/preferences.js");
          if (Preferences.get("services.sync.engine.apps", false)) {
            return;
@@ -612,7 +650,6 @@ diff --git a/services/aitc/service.js b/services/aitc/service.js
          Cu.import("resource://services-common/utils.js");
          CommonUtils.namedTimer(function() {
 -          // Kick-off later!
-+          // Start it up!
 +          Cu.import("resource://services-aitc/main.js");
 +          new Aitc();
          }, 2000, this, "timer");
@@ -626,16 +663,20 @@ diff --git a/services/aitc/service.js b/services/aitc/service.js
 diff --git a/services/aitc/services-aitc.js b/services/aitc/services-aitc.js
 --- a/services/aitc/services-aitc.js
 +++ b/services/aitc/services-aitc.js
-@@ -1,5 +1,17 @@
+@@ -1,5 +1,21 @@
  pref("services.aitc.browserid.url", "https://browserid.org/sign_in");
  pref("services.aitc.browserid.log.level", "Debug");
 +
  pref("services.aitc.client.log.level", "Debug");
 +
 +pref("services.aitc.dashboard.url", "https://myapps.mozillalabs.com");
++pref("dom.mozApps.whitelist", "https://myapps.mozillalabs.com");
 +
-+pref("services.aitc.manager.putFreq", 5000);
-+pref("services.aitc.manager.getFreq", 30000);
++pref("services.aitc.main.idleTime", 120000); // 2 minutes
++
++pref("services.aitc.manager.putFreq", 10000); // 10 seconds
++pref("services.aitc.manager.getActiveFreq", 120000); // 2 minutes
++pref("services.aitc.manager.getPassiveFreq", 7200000); // 2 hours
 +pref("services.aitc.manager.log.level", "Debug");
 +
 +pref("services.aitc.marketplace.url", "https://marketplace.mozilla.org");

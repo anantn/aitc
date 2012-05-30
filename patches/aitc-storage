@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 416a969f7d2fbdd9fae5524883a16f188fd32153
+# Parent 133b8fe390216549769760d0253703608457c388
 # User Anant Narayanan <anant@kix.in>
 aitc-storage
 
@@ -7,7 +7,7 @@ diff --git a/services/aitc/modules/storage.js b/services/aitc/modules/storage.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/storage.js
-@@ -0,0 +1,400 @@
+@@ -0,0 +1,452 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -23,9 +23,9 @@ new file mode 100644
 +Cu.import("resource://gre/modules/FileUtils.jsm");
 +Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 +
-+Cu.import("resource://services-common/rest.js");
 +Cu.import("resource://services-common/log4moz.js");
 +Cu.import("resource://services-common/preferences.js");
++Cu.import("resource://services-common/rest.js");
 +
 +/**
 + * Provides a file-backed queue. Currently used by manager.js as persistent
@@ -42,6 +42,10 @@ new file mode 100644
 + *
 + */
 +function AitcQueue(filename, cb) {
++  if (!cb) {
++    throw new Error("AitcQueue constructor called without callback");
++  }
++
 +  this._log = Log4Moz.repository.getLogger("Service.AITC.Storage.Queue");
 +  this._log.level = Log4Moz.Level[Preferences.get(
 +    "services.aitc.storage.log.level"
@@ -83,14 +87,15 @@ new file mode 100644
 +
 +    try {
 +      this._putFile(this._queue, function _enqueuePutFile(err) {
-+        if (!err) {
-+          // Successful write.
-+          cb(null, true);
++        if (err) {
++          // Write unsuccessful, don't add to queue.
++          self._queue.pop();
++          cb(err, false);
 +          return;
 +        }
-+        // Write unsuccessful, don't add to queue.
-+        self._queue.pop();
-+        cb(new Error(err), false);
++        // Successful write.
++        cb(null, true);
++        return;        
 +      });
 +    } catch (e) {
 +      self._queue.pop();
@@ -206,7 +211,7 @@ new file mode 100644
 +          self._log.info("asyncCopy succeeded");
 +          cb(null);
 +        } else {
-+          let msg = "asyncCopy failed with " + result;
++          let msg = new Error("asyncCopy failed with " + result);
 +          self._log.info(msg);
 +          cb(msg);
 +        }
@@ -256,11 +261,37 @@ new file mode 100644
 +  /**
 +   * Take a list of remote and local apps and figured out what changes (if any)
 +   * are to be made to the local DOMApplicationRegistry.
++   *
++   * General algorithm:
++   *  1. Put all remote apps in a dictionary of origin->app.
++   *  2. Put all local apps in a dictionary of origin->app.
++   *  3. Mark all local apps as "to be deleted".
++   *  4. Go through each remote app:
++   *    4a. If remote app is not marked as deleted, remove from the "to be
++   *        deleted" set.
++   *    4b. If remote app is marked as deleted, but isn't present locally,
++   *        process the next remote app.
++   *    4c. If remote app is not marked as deleted and isn't present locally,
++   *        add to the "to be installed" set.
++   *  5. For each app either in the "to be installed" or "to be deleted" set,
++   *     apply the changes locally. For apps to be installed, we must also
++   *     fetch the manifest.
++   *
 +   */
 +  _processApps: function _processApps(remoteApps, lApps, callback) {
 +    let toDelete = {};
 +    let localApps = {};
-+    
++
++    // If remoteApps is empty, do nothing. The correct thing to do is to
++    // delete all local apps, but we'll play it safe for now since we are
++    // marking apps as deleted anyway. In a subsequent version (when the
++    // deleted flag is no longer in use), this check can be removed.
++    if (!Object.keys(remoteApps).length) {
++      this._log.warn("Empty set of remote apps to _processApps, returning");
++      callback();
++      return;
++    }
++
 +    // Convert lApps to a dictionary of origin -> app (instead of id -> app).
 +    for (let [id, app] in Iterator(lApps)) {
 +      app.id = id;
@@ -277,9 +308,14 @@ new file mode 100644
 +        delete toDelete[origin];
 +      }
 +
-+      // If there is a remote app that isn't local or 
-+      // if the remote app was installed later.
-+      let id = null;
++      // A remote app that was deleted, but also isn't present locally is NOP.
++      if (app.deleted && !localApps[origin]) {
++        continue;
++      }
++
++      // If there is a remote app that isn't local or if the remote app was
++      // installed or updated later.
++      let id;
 +      if (!localApps[origin]) {
 +        id = DOMApplicationRegistry.makeAppId();
 +      }
@@ -300,76 +336,92 @@ new file mode 100644
 +      toUninstall.push({id: toDelete[origin].id, deleted: true});
 +    }
 +
-+    // Apply installs & uninstalls.
-+    this._applyUpdates(toInstall, toUninstall, callback);
++    // Apply uninstalls first, we do not need to fetch manifests.
++    if (toUninstall.length) {
++      this._log.info("Applying uninstalls to registry");
++
++      let self = this;
++      DOMApplicationRegistry.updateApps(toUninstall, function() {
++        // If there are installs, proceed to apply each on in parallel. 
++        if (toInstall.length) {
++          self._applyInstalls(toInstall, callback);
++          return;
++        }
++        callback();
++      });
++
++      return;
++    }
++
++    // If there were no uninstalls, only apply installs
++    if (toInstall.length) {
++      this._applyInstalls(toInstall, callback);
++      return;
++    }
++
++    this._log.info("There were no changes to be applied, returning");
++    callback();
 +    return;
 +  },
 +
 +  /**
-+   * Applies a list of commands as determined by processApps locally.
++   * Apply a set of installs to the local registry. Fetch each app's manifest
++   * in parallel (don't retry on failure) and insert into registry.
 +   */
-+  _applyUpdates: function _applyUpdates(toInstall, toUninstall, callback) {
-+    let finalCommands = [];
++  _applyInstalls: function _applyInstalls(toInstall, callback) {
++    let done = 0;
++    let total = toInstall.length;
++    this._log.info("Applying " + total + " installs to registry");
 +
++    /**
++     * The purpose of _checkIfDone is to invoke the callback after all the
++     * installs have been applied. They all fire in parallel, and each will
++     * check-in when it is done.
++     */
 +    let self = this;
-+    function onManifestsUpdated() {
-+      if (toUninstall.length) {
-+        finalCommands = finalCommands.concat(toUninstall);
-+      }
-+      if (finalCommands.length) {
-+        self._log.info(
-+          "processUpdates finished fetching manifests, calling updateApps"
-+        );
-+        DOMApplicationRegistry.updateApps(finalCommands, callback);
-+      } else {
-+        self._log.info(
-+          "processUpdates finished fetching, no finalCommands were found"
-+        );
++    function _checkIfDone() {
++      done += 1;
++      self._log.debug(done + "/" + total + " apps processed");
++      if (done == total) {
 +        callback();
 +      }
 +    }
 +
-+    // If no new manifests to fetch, proceed with update.
-+    let done = 0;
-+    let total = toInstall.length;
-+    if (!total) {
-+      onManifestsUpdated();
-+      return;
++    function _makeManifestCallback(appObj) {
++      return function(err, manifest) {
++        if (err) {
++          self._log.warn("Could not fetch manifest for " + appObj.name);
++          _checkIfDone();
++          return;
++        }
++        appObj.value.manifest = manifest;
++        DOMApplicationRegistry.updateApps([appObj], _checkIfDone);
++      }
 +    }
 +
-+    // Update manifests for all the new remote apps we have.
-+    for (let j = 0; j < total; j++) {
-+      let app = toInstall[j];
++    /**
++     * Now we get a manifest for each record, and add it to the local registry
++     * when we receive it. If a manifest GET times out, we will not add
++     * the app to the registry but count as "success" anyway. The app will
++     * be added on the next GET poll, hopefully the manifest will be
++     * available then.
++     */
++    for each (let app in toInstall) {
 +      let url = app.value.manifestURL;
 +      if (url[0] == "/") {
 +        url = app.value.origin + app.value.manifestURL;
 +      }
-+
-+      this._log.info("Updating manifest " + url + "\n");
-+      this._getManifest(url, function(err, manifest) {
-+        if (!err) {
-+          app.value.manifest = manifest;
-+          finalCommands.push(app);
-+          self._log.info(app.id + " was added to finalCommands");
-+        } else {
-+          self._log.debug("Couldn't fetch manifest at " + url + ": " + err);
-+        }
-+
-+        // Not a big deal if we couldn't get a manifest, we will try to fetch
-+        // it again in the next cycle. Carry on.
-+        done += 1;
-+        if (done == total) {
-+          onManifestsUpdated();
-+        }
-+      });
++      this._getManifest(url, _makeManifestCallback(app));
 +    }
 +  },
 +
 +  /**
-+   * Fetch a manifest from given URL. No retries are made on failure.
++   * Fetch a manifest from given URL. No retries are made on failure. We'll
++   * timeout after 20 seconds.
 +   */
-+  _getManifest: function _getManifest(url, callback)  {
++  _getManifest: function _getManifest(url, callback) {
 +    let req = new RESTRequest(url);
++    req.timeout = 20;
 +
 +    let self = this;
 +    req.get(function(error) {
@@ -419,7 +471,24 @@ diff --git a/services/aitc/services-aitc.js b/services/aitc/services-aitc.js
 diff --git a/services/aitc/tests/unit/head_global.js b/services/aitc/tests/unit/head_global.js
 --- a/services/aitc/tests/unit/head_global.js
 +++ b/services/aitc/tests/unit/head_global.js
-@@ -39,14 +39,16 @@ registrar.registerFactory(Components.ID(
+@@ -1,13 +1,14 @@
+ /* Any copyright is dedicated to the Public Domain.
+  * http://creativecommons.org/publicdomain/zero/1.0/ */
+ 
+-// This has the side-effect of populating Cc, Ci, Cu, Cr. It's best not to
+-// ask questions and just accept it.
++const TEST_SERVER_URL = "http://localhost:8080/";
++
++// This has the side-effect of populating Cc, Ci, Cu, Cr.
+ do_load_httpd_js();
+ const Cm = Components.manager;
+ 
+ let gSyncProfile = do_get_profile();
+ 
+ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ 
+ let XULAppInfo = {
+@@ -39,14 +40,35 @@ registrar.registerFactory(Components.ID(
                            "XULAppInfo", "@mozilla.org/xre/app-info;1",
                            XULAppInfoFactory);
  
@@ -439,17 +508,11 @@ diff --git a/services/aitc/tests/unit/head_global.js b/services/aitc/tests/unit/
 +    handler.setSubstitution("services-" + module, uri);
 +  }
  }
- addResourceAlias();
+-addResourceAlias();
 \ No newline at end of file
-diff --git a/services/aitc/tests/unit/head_helpers.js b/services/aitc/tests/unit/head_helpers.js
-new file mode 100644
---- /dev/null
-+++ b/services/aitc/tests/unit/head_helpers.js
-@@ -0,0 +1,37 @@
-+/* This Source Code Form is subject to the terms of the Mozilla Public
-+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
-+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
++addResourceAlias();
 +
++Cu.import("resource://services-common/utils.js");
 +function httpd_setup (handlers, port) {
 +  let port   = port || 8080;
 +  let server = new nsHttpServer();
@@ -459,31 +522,14 @@ new file mode 100644
 +  try {
 +    server.start(port);
 +  } catch (ex) {
-+    _("==========================================");
-+    _("Got exception starting HTTP server on port " + port);
-+    _("Error: " + Utils.exceptionStr(ex));
-+    _("Is there a process already listening on port " + port + "?");
-+    _("==========================================");
++    do_print("==========================================");
++    do_print("Got exception starting HTTP server on port " + port);
++    do_print("Error: " + CommonUtils.exceptionStr(ex));
++    do_print("Is there a process already listening on port " + port + "?");
++    do_print("==========================================");
 +    do_throw(ex);
 +  }
-+
-+  return server;
 +}
-+
-+function httpd_handler(statusCode, status, body) {
-+  return function handler(request, response) {
-+    _("Processing request");
-+    // Allow test functions to inspect the request.
-+    request.body = readBytesFromInputStream(request.bodyInputStream);
-+    handler.request = request;
-+
-+    response.setStatusLine(request.httpVersion, statusCode, status);
-+    if (body) {
-+      response.bodyOutputStream.write(body, body.length);
-+    }
-+  };
-+}
-\ No newline at end of file
 diff --git a/services/aitc/tests/unit/test_load_modules.js b/services/aitc/tests/unit/test_load_modules.js
 --- a/services/aitc/tests/unit/test_load_modules.js
 +++ b/services/aitc/tests/unit/test_load_modules.js
@@ -510,7 +556,7 @@ new file mode 100644
 +Cu.import("resource://services-aitc/storage.js");
 +Cu.import("resource://services-common/async.js");
 +
-+var queue = null;
++let queue = null;
 +
 +function run_test() {
 +  queue = new AitcQueue("test", run_next_test);
@@ -537,7 +583,7 @@ new file mode 100644
 +
 +add_test(function test_queue_enqueue() {
 +  // Add to queue
-+  var testObj = {foo: "bar"};
++  let testObj = {foo: "bar"};
 +  queue.enqueue(testObj, function(err, done) {
 +    do_check_eq(err, null);
 +    do_check_eq(done, true);
@@ -637,7 +683,7 @@ diff --git a/services/aitc/tests/unit/test_storage_registry.js b/services/aitc/t
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/tests/unit/test_storage_registry.js
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,123 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
 +
@@ -646,8 +692,8 @@ new file mode 100644
 +
 +const SERVER = "http://localhost";
 +
-+var fakeApp1 = {
-+  origin: SERVER + ":8081",
++let fakeApp1 = {
++  origin: SERVER + ":8080",
 +  receipts: [],
 +  manifestURL: "/manifest.webapp",
 +  installOrigin: "http://localhost",
@@ -656,7 +702,7 @@ new file mode 100644
 +};
 +
 +// Valid manifest for app1
-+var manifest1 = {
++let manifest1 = {
 +  name: "Appasaurus",
 +  description: "Best fake app ever",
 +  launch_path: "/",
@@ -664,8 +710,8 @@ new file mode 100644
 +  required_features: ["webgl"]
 +};
 +
-+var fakeApp2 = {
-+  origin: SERVER + ":8082",
++let fakeApp2 = {
++  origin: SERVER + ":8081",
 +  receipts: ["fake.jwt.token"],
 +  manifestURL: "/manifest.webapp",
 +  installOrigin: "http://localhost",
@@ -674,49 +720,52 @@ new file mode 100644
 +};
 +
 +// Invalid manifest for app2
-+var manifest2_bad = {
++let manifest2_bad = {
 +  not: "a manifest",
 +  fullscreen: true
 +};
 +
 +// Valid manifest for app2
-+var manifest2_good = {
++let manifest2_good = {
 +  name: "Supercalifragilisticexpialidocious",
 +  description: "Did we blow your mind yet?",
 +  launch_path: "/"
 +};
 +
++let fakeApp3 = {
++  origin: SERVER + ":8083", // 8082 is for the good manifest2
++  receipts: [],
++  manifestURL: "/manifest.webapp",
++  installOrigin: "http://localhost",
++  installedAt: Date.now(),
++  modifiedAt: Date.now()
++};
++
++let manifest3 = {
++  name: "Taumatawhakatangihangakoauauotamateapokaiwhenuakitanatahu",
++  description: "Find your way around this beautiful hill",
++  launch_path: "/"
++};
++
 +function create_servers() {
-+  // Serve manifests for test apps
-+  let app1 = httpd_setup({"/manifest.webapp": function(req, res) {
-+    let manifest = JSON.stringify(manifest1);
-+    res.setStatusLine(req.httpVersion, 200, "OK");
-+    res.setHeader("Content-Type", "application/x-web-app-manifest+json");
-+    res.bodyOutputStream.write(manifest, manifest.length);
-+  }}, 8081);
-+
-+  let app2_bad = httpd_setup({"/manifest.webapp": function(req, res) {
-+    let manifest = JSON.stringify(manifest2_bad);
-+    res.setStatusLine(req.httpVersion, 200, "OK");
-+    res.setHeader("Content-Type", "application/x-web-app-manifest+json");
-+    res.bodyOutputStream.write(manifest, manifest.length);
-+  }}, 8082);
-+
-+  let app2_good = httpd_setup({"/manifest.webapp": function(req, res) {
-+    let manifest = JSON.stringify(manifest2_good);
-+    res.setStatusLine(req.httpVersion, 200, "OK");
-+    res.setHeader("Content-Type", "application/x-web-app-manifest+json");
-+    res.bodyOutputStream.write(manifest, manifest.length);
-+  }}, 8083);
++  // Setup servers to server manifests at each port
++  let manifests = [manifest1, manifest2_bad, manifest2_good, manifest3];
++  for (let i = 0; i < manifests.length; i++) {
++    let response = JSON.stringify(manifests[i]);
++    httpd_setup({"/manifest.webapp": function(req, res) {
++      res.setStatusLine(req.httpVersion, 200, "OK");
++      res.setHeader("Content-Type", "application/x-web-app-manifest+json");
++      res.bodyOutputStream.write(response, response.length);
++    }}, 8080 + i);
++  }
 +}
 +
 +function run_test() {
++  create_servers();
 +  run_next_test();
 +}
 +
-+add_test(function test_storage_process() {
-+  create_servers();
-+
++add_test(function test_storage_install() {
 +  let apps = [fakeApp1, fakeApp2];
 +  AitcStorage.processApps(apps, function() {
 +    // Verify that app1 got added to registry
@@ -727,7 +776,7 @@ new file mode 100644
 +    do_check_eq(DOMApplicationRegistry._appId(fakeApp2.origin), null);
 +
 +    // Now associate fakeApp2 with a good manifest and process again
-+    fakeApp2.origin = SERVER + ":8083";
++    fakeApp2.origin = SERVER + ":8082";
 +    AitcStorage.processApps([fakeApp1, fakeApp2], function() {
 +      // Both apps must be installed
 +      let id1 = DOMApplicationRegistry._appId(fakeApp1.origin);
@@ -739,12 +788,22 @@ new file mode 100644
 +  });
 +});
 +
-+add_test(function test_storage_delete() {
-+  // Set app1 as deleted
++add_test(function test_storage_uninstall() {
++  // Set app1 as deleted.
 +  fakeApp1.deleted = true;
-+  AitcStorage.processApps([fakeApp1, fakeApp2], function() {
-+    // It should be missing
++  AitcStorage.processApps([fakeApp2], function() {
++    // It should be missing.
 +    do_check_eq(DOMApplicationRegistry._appId(fakeApp1.origin), null);
++    run_next_test();
++  });
++});
++
++add_test(function test_storage_uninstall_empty() {
++  // Now remove app2 by virtue of it missing in the remote list.
++  AitcStorage.processApps([fakeApp3], function() {
++    let id3 = DOMApplicationRegistry._appId(fakeApp3.origin);
++    do_check_eq(DOMApplicationRegistry.itemExists(id3), true);
++    do_check_eq(DOMApplicationRegistry._appId(fakeApp2.origin), null);
 +    run_next_test();
 +  });
 +});
@@ -754,8 +813,7 @@ diff --git a/services/aitc/tests/unit/xpcshell.ini b/services/aitc/tests/unit/xp
 +++ b/services/aitc/tests/unit/xpcshell.ini
 @@ -1,6 +1,7 @@
  [DEFAULT]
--head = head_global.js
-+head = head_global.js head_helpers.js
+ head = head_global.js
  tail =
  
 -# Ensure we can import everything.
