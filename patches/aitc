@@ -1,7 +1,28 @@
 # HG changeset patch
-# Parent 8cf563a575fdba335c3a862fd6da19aedb9965c8
+# Parent e8a025a7101b3390f01ee04b96906e708df5b945
 aitc-client
 
+diff --git a/browser/installer/package-manifest.in b/browser/installer/package-manifest.in
+--- a/browser/installer/package-manifest.in
++++ b/browser/installer/package-manifest.in
+@@ -431,16 +431,17 @@
+ @BINPATH@/components/@DLL_PREFIX@dbusservice@DLL_SUFFIX@
+ #endif
+ @BINPATH@/components/nsINIProcessor.manifest
+ @BINPATH@/components/nsINIProcessor.js
+ @BINPATH@/components/nsPrompter.manifest
+ @BINPATH@/components/nsPrompter.js
+ #ifdef MOZ_SERVICES_SYNC
+ @BINPATH@/components/SyncComponents.manifest
++@BINPATH@/components/AitcComponents.manifest
+ @BINPATH@/components/Weave.js
+ #endif
+ @BINPATH@/components/TelemetryPing.js
+ @BINPATH@/components/TelemetryPing.manifest
+ @BINPATH@/components/messageWakeupService.js
+ @BINPATH@/components/messageWakeupService.manifest
+ @BINPATH@/components/SettingsManager.js
+ @BINPATH@/components/SettingsManager.manifest
 diff --git a/services/Makefile.in b/services/Makefile.in
 --- a/services/Makefile.in
 +++ b/services/Makefile.in

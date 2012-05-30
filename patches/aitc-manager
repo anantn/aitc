@@ -1,7 +1,7 @@
 # HG changeset patch
-# Parent 6de92ad8c312b5b207b7da1bd47d50a3d064da61
+# Parent b492e10dd32c4c8d7efa7f09f6cac9b564f54706
 # User Anant Narayanan <anant@kix.in>
-AITC main service & manager
+try: -b do -p all -u all -t all
 
 diff --git a/services/aitc/modules/main.js b/services/aitc/modules/main.js
 new file mode 100644
