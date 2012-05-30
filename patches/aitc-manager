@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent b492e10dd32c4c8d7efa7f09f6cac9b564f54706
+# Parent 0cc08d7e2d91bdfda5b57e2e90b0fa6536383ef5
 # User Anant Narayanan <anant@kix.in>
 try: -b do -p all -u all -t all
 
@@ -7,7 +7,7 @@ diff --git a/services/aitc/modules/main.js b/services/aitc/modules/main.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/main.js
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,161 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -23,6 +23,7 @@ new file mode 100644
 +Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 +
 +Cu.import("resource://services-aitc/manager.js");
++Cu.import("resource://services-common/utils.js");
 +Cu.import("resource://services-common/log4moz.js");
 +Cu.import("resource://services-common/preferences.js");
 +
@@ -33,21 +34,13 @@ new file mode 100644
 +  )];
 +  this._log.info("Loading AitC");
 +
-+  let self = this;
-+  this._manager = new AitcManager(function _managerDone() {
-+    self._log.info("Initializing AitC listeners");
-+    self._init();
-+  });
++  this.DASHBOARD_ORIGIN = CommonUtils.makeURI(
++    Preferences.get("services.aitc.dashboard.url")
++  ).prePath;
++
++  this._manager = new AitcManager(this._init.bind(this));
 +}
 +Aitc.prototype = {
-+  get IDLE_TIMER() {
-+    return Preferences.get("services.aitc.main.idleTime");
-+  },
-+
-+  get DASHBOARD_URL() {
-+    return Preferences.get("services.aitc.dashboard.url");
-+  },
-+
 +  // The goal of the init function is to be ready to activate the AITC
 +  // client whenever the user is looking at the dashboard.
 +  _init: function init() {
@@ -88,7 +81,7 @@ new file mode 100644
 +      onLocationChange: function onLocationChange(browser, pr, req, loc, flag) {
 +        let win = Services.wm.getMostRecentWindow("navigator:browser");
 +        if (win.gBrowser.selectedBrowser == browser) {
-+          if (loc.prePath == self.DASHBOARD_URL) {
++          if (loc.prePath == self.DASHBOARD_ORIGIN) {
 +            dashboardLoaded(browser);
 +          }
 +        }
@@ -97,7 +90,7 @@ new file mode 100644
 +    // Called when the current tab selection changes.
 +    function tabSelected(event) {
 +      let browser = event.target.linkedBrowser;
-+      if (browser.currentURI.prePath == self.DASHBOARD_URL) {
++      if (browser.currentURI.prePath == self.DASHBOARD_ORIGIN) {
 +        dashboardLoaded(browser);
 +      } else {
 +        dashboardUnloaded();
@@ -105,8 +98,10 @@ new file mode 100644
 +    }
 +
 +    // Add listeners for all windows opened in the future.
-+    function winWatcher(subject, topic) {
-+      if (topic != "domwindowopened") return;
++    function winWatcher(subject, topic) {  
++      if (topic != "domwindowopened") {
++        return;
++      }
 +      subject.addEventListener("load", function winWatcherLoad() {
 +        subject.removeEventListener("load", winWatcherLoad, false);
 +        let doc = subject.document.documentElement;
@@ -127,10 +122,7 @@ new file mode 100644
 +      browser.tabContainer.addEventListener("TabSelect", tabSelected);
 +
 +      // Also check the currently open URI.
-+      let uri = Services.io.newURI(
-+        browser.contentDocument.location.href, null, null
-+      );
-+      if (uri.prePath == this.DASHBOARD_URL) {
++      if (browser.currentURI.prePath == this.DASHBOARD_ORIGIN) {
 +        dashboardLoaded(browser);
 +      }
 +    }
@@ -142,7 +134,8 @@ new file mode 100644
 +    // Add listener for idle service.
 +    let idleSvc = Cc["@mozilla.org/widget/idleservice;1"].
 +                  getService(Ci.nsIIdleService);
-+    idleSvc.addIdleObserver(this, this.IDLE_TIMER);
++    idleSvc.addIdleObserver(this,
++                            Preferences.get("services.aitc.main.idleTime"));
 +  },
 +
 +  observe: function(aSubject, aTopic, aData) {
@@ -167,10 +160,9 @@ new file mode 100644
 +      case "back":
 +        this._log.info("User is no longer idle");
 +        let win = Services.wm.getMostRecentWindow("navigator:browser");
-+        if (win && this._manager) {
-+          if (win.gBrowser.currentURI.prePath == this.DASHBOARD_URL) {
-+            this._manager.userActive();
-+          }
++        if (win && win.gBrowser.currentURI.prePath == this.DASHBOARD_ORIGIN &&
++            this._manager) {
++          this._manager.userActive();
 +        }
 +        break;
 +    }
@@ -181,7 +173,7 @@ diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/manager.js
-@@ -0,0 +1,446 @@
+@@ -0,0 +1,449 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -238,16 +230,26 @@ new file mode 100644
 +  });
 +}
 +AitcManager.prototype = {
-+  get MARKETPLACE() {
-+    return PREFS.get("marketplace.url");
-+  },
++  /**
++   * State of the user. ACTIVE implies user is looking at the dashboard,
++   * PASSIVE means either not at the dashboard or the idle timer started.
++   */
++  _ACTIVE: 1,
++  _PASSIVE: 2,
 +
-+  get DASHBOARD_URL() {
-+    return PREFS.get("dashboard.url");
++  /**
++   * Smart setter that will only call _setPoll is the value changes.
++   */
++  __state: null,
++  get _state() {
++    return this.__state;
 +  },
-+
-+  get TOKEN_SERVER() {
-+    return PREFS.get("tokenServer.url");
++  set _state(value) {
++    if (this.__state == value) {
++      return;
++    }
++    this.__state = value;
++    this._setPoll();
 +  },
 +
 +  /**
@@ -287,7 +289,7 @@ new file mode 100644
 +   */
 +  userActive: function userActive(win) {
 +    if (this._client) {
-+      this._setPoll("ACTIVE");
++      this._state = this._ACTIVE;
 +      return;
 +    }
 +
@@ -303,7 +305,7 @@ new file mode 100644
 +        return;
 +      }
 +      self._client = client;
-+      self._setPoll("ACTIVE");
++      self._state = self._ACTIVE;
 +    }, true, win);
 +  },
 +
@@ -313,24 +315,22 @@ new file mode 100644
 +   * page, a call to userActive MUST be made.
 +   */
 +  userIdle: function userIdle() {
-+    self._setPoll("PASSIVE");
++    this._state = this._PASSIVE;
 +  },
 +
-+   /**
++  /**
 +   * Poll the AITC server for any changes and process them. It is safe to call
-+   * this function multiple times. Last caller wins.
++   * this function multiple times. Last caller wins. The function will
++   * grab the current user state from _state and act accordingly.
 +   *
-+   * Call this whenever the following occurs:
-+   *  ACTIVE: User visits dashboard (immediate fetch + timer on ACTIVE_FREQ).
-+   *  PASSIVE: User is no longer on the dashboard (timer on IDLE_FREQ).
-+   *  PASSIVE: User goes idle (timer on IDLE_FREQ) even if user is on dashboard.
++   * Invalid states will cause this function to throw.
 +   */
-+  _setPoll: function _setPoll(type) {
-+    if (type == "ACTIVE" && !this._client) {
++  _setPoll: function _setPoll() {
++    if (this._state == this._ACTIVE && !this._client) {
 +      throw new Error("_setPoll(ACTIVE) called without client");
 +    }
-+    if (type != "ACTIVE" && type != "PASSIVE") {
-+      throw new Error("_setPoll called with invalid argument " + type);
++    if (this._state != this._ACTIVE && this._state != this._PASSIVE) {
++      throw new Error("_state is invalid " + this._state);
 +    }
 +
 +    if (!this._client) {
@@ -341,11 +341,19 @@ new file mode 100644
 +
 +    // Check if there are any PUTs pending first.
 +    if (this._pending.length() && !(this._putTimer)) {
-+      // There are pending PUTs and no timer, so let's process them.
++      // There are pending PUTs and no timer, so let's process them. GETs will
++      // resume after the PUTs finish (see processQueue)
 +      this._processQueue();
-+    } else {
-+      // Do one GET soon.
++      return;
++    }
++    
++    // Do one GET soon, but only if user is active.
++    let getFreq;
++    if (this._state == this._ACTIVE) {
 +      CommonUtils.nextTick(this._checkServer, this);
++      getFreq = PREFS.get("manager.getActiveFreq");
++    } else {
++      getFreq = PREFS.get("manager.getPassiveFreq");
 +    }
 +
 +    // Cancel existing timer, if any.
@@ -354,25 +362,13 @@ new file mode 100644
 +      this._getTimer = null;
 +    }
 +
-+    // Start the timer for GETs. In case there were pending PUTs, _checkServer
-+    // will automatically abort, and we'll retry after getFreq.
-+    let getFreq;
-+    if (type == "ACTIVE") {
-+      getFreq = PREFS.get("manager.getActiveFreq");
-+    } else {
-+      getFreq = PREFS.get("manager.getPassiveFreq");
-+    }
-+
++    // Start the timer for GETs.
 +    let self = this;
 +    this._log.info("Starting GET timer");
 +    this._getTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
-+    this._getTimer.initWithCallback(
-+      {
-+        notify: function _getTimerNotify() {
-+          self._checkServer();
-+        },
-+      }, getFreq, Ci.nsITimer.TYPE_REPEATING_SLACK
-+    );
++    this._getTimer.initWithCallback({notify: this._checkServer.bind(this)},
++                                    getFreq, Ci.nsITimer.TYPE_REPEATING_SLACK);
++
 +    this._log.info("GET timer set, next attempt in " + getFreq + "ms");
 +  },
 +
@@ -418,24 +414,20 @@ new file mode 100644
 +
 +  /**
 +   * Go through list of apps to PUT and attempt each one. If we fail, try
-+   * again in PUT_FREQ.
++   * again in PUT_FREQ. Will throw if called with an empty, _reschedule()
++   * makes sure that we don't.
 +   */
-+  _processQueue: function _processPutQueue() {
++  _processQueue: function _processQueue() {
 +    if (!this._client) {
 +      throw new Error("_processQueue called without a client");
 +    }
-+
 +    if (!this._pending.length()) {
-+      this._log.info("There are no pending items, _processQueue closing");
-+      if (this._putTimer) {
-+        this._putTimer.clear();
-+      }
-+      return;
++      throw new Error("_processQueue called with an empty queue");
 +    }
 +
 +    if (this._putInProgress) {
 +      // The network request sent out as a result to the last call to
-+      // _processPutQueue still isn't done. A timer is created they all
++      // _processQueue still isn't done. A timer is created they all
 +      // finish to make sure this function is called again if neccessary.
 +      return;
 +    }
@@ -489,6 +481,8 @@ new file mode 100644
 +      // We just finished PUTting an object, try the next one immediately,
 +      // but only if haven't tried it already in the last putFreq (ms).
 +      if (!self._pending.length()) {
++        // Start GET timer now that we're done with PUTs.
++        self._setPoll();
 +        return;
 +      }
 +
@@ -534,7 +528,7 @@ new file mode 100644
 +   * cb(err, token) will be invoked on success or failure.
 +   */
 +  _getToken: function _getToken(assertion, cb) {
-+    let url = this.TOKEN_SERVER + "/1.0/aitc/1.0";
++    let url = PREFS.get("tokenServer.url") + "/1.0/aitc/1.0";
 +    let client = new TokenServerClient();
 +
 +    this._log.info("Obtaining token from " + url);
@@ -623,7 +617,8 @@ new file mode 100644
 +    // Check if we can get assertion silently first
 +    self._log.info("Attempting to obtain assertion silently")
 +    BrowserID.getAssertion(gotSilentAssertion, {
-+      audience: this.DASHBOARD_URL, sameEmailAs: this.MARKETPLACE
++      audience: PREFS.get("dashboard.url"),
++      sameEmailAs: PREFS.get("marketplace.url")
 +    });
 +  },
 +
@@ -631,7 +626,24 @@ new file mode 100644
 diff --git a/services/aitc/service.js b/services/aitc/service.js
 --- a/services/aitc/service.js
 +++ b/services/aitc/service.js
-@@ -20,25 +20,26 @@ AitcService.prototype = {
+@@ -4,41 +4,44 @@
+ 
+ "use strict";
+ 
+ const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ Cu.import("resource://gre/modules/Services.jsm");
+ 
+ function AitcService() {
++  this.aitc = null;
+   this.wrappedJSObject = this;
+ }
+ AitcService.prototype = {
+   classID: Components.ID("{a3d387ca-fd26-44ca-93be-adb5fda5a78d}"),
+ 
+   QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver,
+                                          Ci.nsISupportsWeakReference]),
+ 
    observe: function observe(subject, topic, data) {
      switch (topic) {
        case "app-startup":
@@ -647,11 +659,12 @@ diff --git a/services/aitc/service.js b/services/aitc/service.js
            return;
          }
  
++        let self = this;
          Cu.import("resource://services-common/utils.js");
          CommonUtils.namedTimer(function() {
 -          // Kick-off later!
 +          Cu.import("resource://services-aitc/main.js");
-+          new Aitc();
++          self.aitc = new Aitc();
          }, 2000, this, "timer");
          break;
      }
@@ -663,14 +676,13 @@ diff --git a/services/aitc/service.js b/services/aitc/service.js
 diff --git a/services/aitc/services-aitc.js b/services/aitc/services-aitc.js
 --- a/services/aitc/services-aitc.js
 +++ b/services/aitc/services-aitc.js
-@@ -1,5 +1,21 @@
+@@ -1,5 +1,20 @@
  pref("services.aitc.browserid.url", "https://browserid.org/sign_in");
  pref("services.aitc.browserid.log.level", "Debug");
 +
  pref("services.aitc.client.log.level", "Debug");
 +
 +pref("services.aitc.dashboard.url", "https://myapps.mozillalabs.com");
-+pref("dom.mozApps.whitelist", "https://myapps.mozillalabs.com");
 +
 +pref("services.aitc.main.idleTime", 120000); // 2 minutes
 +

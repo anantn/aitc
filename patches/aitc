@@ -195,14 +195,14 @@ new file mode 100644
 +   * GET request returned from getApps, process.
 +   */
 +  _processGetApps: function _processGetApps(err, cb, req) {
++    // Set X-Backoff or Retry-After, if needed.
++    this._setBackoff(req);
++    
 +    if (err) {
 +      this._log.error("getApps request error " + err);
 +      cb(err, null);
 +      return;
 +    }
-+
-+    // Set X-Backoff or Retry-After, if needed.
-+    this._setBackoff(req);
 +    
 +    // Process response.
 +    if (req.response.status == 304) {
@@ -279,7 +279,7 @@ new file mode 100644
 +      }
 +    }
 +
-+    let record = {
++    let record = { 
 +      origin:         app.origin,
 +      installOrigin:  app.installOrigin,
 +      installedAt:    app.installedAt,
