@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent ef9ecb5fcda88850da6f5f31e7a8e4f01966e04b
+# Parent 316a4df7f15e712712aa8db3bda5fdf97b4dec0e
 
 diff --git a/services/aitc/tests/Makefile.in b/services/aitc/tests/Makefile.in
 --- a/services/aitc/tests/Makefile.in
@@ -241,7 +241,7 @@ diff --git a/services/aitc/tests/head.js b/services/aitc/tests/head.js
 +const marketplace = "https://marketplace.mozilla.org";
 +
 +const testEmail = "moztest@mailinator.com";
-+const testPassword = "moztestpassword";
++const testPassword = "mailinator";
 +const signInPage = "https://browserid.org/signin";
 +
  function loadURL(aURL, aCB) {

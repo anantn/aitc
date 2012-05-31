@@ -2,7 +2,6 @@ aitc
 aitc-storage
 aitc-browserid
 aitc-manager
-browserid-extra-tests
 package-js-modules
 httpdjs-module
 services-import-httpserver
@@ -10,3 +9,4 @@ storage-server
 aitc-server
 aitc-server-test
 aitc-mockserver-test
+browserid-extra-tests
