@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 97d0f1616f1671440d26571848f854f623a77325
+# Parent 6c08cae208b73e60fd12d810c4af1e831f8e07f7
 # User Anant Narayanan <anant@kix.in>
 try: -b do -p all -u all -t all
 
@@ -29,7 +29,7 @@ rename from services/aitc/service.js
 rename to services/aitc/Aitc.js
 --- a/services/aitc/service.js
 +++ b/services/aitc/Aitc.js
-@@ -2,43 +2,110 @@
+@@ -2,43 +2,117 @@
   * License, v. 2.0. If a copy of the MPL was not distributed with this file,
   * You can obtain one at http://mozilla.org/MPL/2.0/. */
  
@@ -75,6 +75,13 @@ rename to services/aitc/Aitc.js
 -        CommonUtils.namedTimer(function() {
 -          // Kick-off later!
 -        }, 2000, this, "timer");
++        Cu.import("resource://services-common/log4moz.js");
++        let root = Log4Moz.repository.rootLogger;
++        root.level = Log4Moz.Level["All"];
++        let dapp = new Log4Moz.DumpAppender();
++        dapp.level = Log4Moz.Level["All"];
++        root.addAppender(dapp);
++
 +        // Start AITC service if apps.enabled is true. If false, we look
 +        // in the browser history to determine if they're an "apps user". If
 +        // an entry wasn't found, we'll watch for navigation to either the

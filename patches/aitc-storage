@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent ea38d51689a0f17f2fe6cb3b9e834fd3fc54e2a3
+# Parent a551e22a0f80d35825a9074d9306e85811d8a8a0
 # User Anant Narayanan <anant@kix.in>
 aitc-storage
 
@@ -73,7 +73,7 @@ new file mode 100644
 +}
 +AitcQueue.prototype = {
 +  /**
-+   * Add an object to the queue.
++   * Add an object to the queue, and data is saved to disk.
 +   */
 +  enqueue: function enqueue(obj, cb) {
 +    this._log.info("Adding to queue " + obj);
@@ -104,7 +104,7 @@ new file mode 100644
 +  },
 +
 +  /**
-+   * Remove the object at the head of the queue.
++   * Remove the object at the head of the queue, and data is saved to disk.
 +   */
 +  dequeue: function dequeue(cb) {
 +    this._log.info("Removing head of queue");
@@ -140,17 +140,17 @@ new file mode 100644
 +   * Return the object at the front of the queue without removing it.
 +   */
 +  peek: function peek() {
++    this._log.info("Peek called when length " + this._queue.length);
 +    if (!this._queue.length) {
 +      throw new Error("Queue is empty");
 +    }
-+    this._log.info("Peek returning head of queue");
 +    return this._queue[0];
 +  },
 +
 +  /**
 +   * Find out the length of the queue.
 +   */
-+  length: function length(cb) {
++  get length() {
 +    return this._queue.length;
 +  },
 +
@@ -469,50 +469,71 @@ diff --git a/services/aitc/services-aitc.js b/services/aitc/services-aitc.js
 +pref("services.aitc.storage.log.level", "Debug");
 \ No newline at end of file
 diff --git a/services/aitc/tests/unit/head_global.js b/services/aitc/tests/unit/head_global.js
+deleted file mode 100644
 --- a/services/aitc/tests/unit/head_global.js
-+++ b/services/aitc/tests/unit/head_global.js
-@@ -1,13 +1,14 @@
- /* Any copyright is dedicated to the Public Domain.
-  * http://creativecommons.org/publicdomain/zero/1.0/ */
- 
++++ /dev/null
+@@ -1,52 +0,0 @@
+-/* Any copyright is dedicated to the Public Domain.
+- * http://creativecommons.org/publicdomain/zero/1.0/ */
+-
 -// This has the side-effect of populating Cc, Ci, Cu, Cr. It's best not to
 -// ask questions and just accept it.
-+const TEST_SERVER_URL = "http://localhost:8080/";
-+
-+// This has the side-effect of populating Cc, Ci, Cu, Cr.
- do_load_httpd_js();
- const Cm = Components.manager;
- 
- let gSyncProfile = do_get_profile();
- 
- Cu.import("resource://gre/modules/XPCOMUtils.jsm");
- 
- let XULAppInfo = {
-@@ -39,14 +40,35 @@ registrar.registerFactory(Components.ID(
-                           "XULAppInfo", "@mozilla.org/xre/app-info;1",
-                           XULAppInfoFactory);
- 
- function addResourceAlias() {
-   Cu.import("resource://gre/modules/Services.jsm");
-   const handler = Services.io.getProtocolHandler("resource")
-                   .QueryInterface(Ci.nsIResProtocolHandler);
- 
+-do_load_httpd_js();
+-const Cm = Components.manager;
+-
+-let gSyncProfile = do_get_profile();
+-
+-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+-
+-let XULAppInfo = {
+-  vendor: "Mozilla",
+-  name: "XPCShell",
+-  ID: "xpcshell@tests.mozilla.org",
+-  version: "1",
+-  appBuildID: "20100621",
+-  platformVersion: "",
+-  platformBuildID: "20100621",
+-  inSafeMode: false,
+-  logConsoleErrors: true,
+-  OS: "XPCShell",
+-  XPCOMABI: "noarch-spidermonkey",
+-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIXULAppInfo, Ci.nsIXULRuntime]),
+-  invalidateCachesOnRestart: function invalidateCachesOnRestart() { }
+-};
+-
+-let XULAppInfoFactory = {
+-  createInstance: function (outer, iid) {
+-    if (outer != null)
+-      throw Cr.NS_ERROR_NO_AGGREGATION;
+-    return XULAppInfo.QueryInterface(iid);
+-  }
+-};
+-
+-let registrar = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
+-registrar.registerFactory(Components.ID("{fbfae60b-64a4-44ef-a911-08ceb70b9f31}"),
+-                          "XULAppInfo", "@mozilla.org/xre/app-info;1",
+-                          XULAppInfoFactory);
+-
+-function addResourceAlias() {
+-  Cu.import("resource://gre/modules/Services.jsm");
+-  const handler = Services.io.getProtocolHandler("resource")
+-                  .QueryInterface(Ci.nsIResProtocolHandler);
+-
 -  
 -  let uri = Services.io.newURI("resource:///modules/services-aitc/",
 -                               null, null);
 -  handler.setSubstitution("services-aitc", uri);
-+  let modules = ["aitc", "common"];
-+  for each (let module in modules) {
-+    let uri = Services.io.newURI("resource:///modules/services-" + module + "/",
-+                                 null, null);
-+    handler.setSubstitution("services-" + module, uri);
-+  }
- }
+-}
 -addResourceAlias();
 \ No newline at end of file
-+addResourceAlias();
-+
-+Cu.import("resource://services-common/utils.js");
+diff --git a/services/aitc/tests/unit/head_helpers.js b/services/aitc/tests/unit/head_helpers.js
+new file mode 100644
+--- /dev/null
++++ b/services/aitc/tests/unit/head_helpers.js
+@@ -0,0 +1,20 @@
++/* Any copyright is dedicated to the Public Domain.
++ * http://creativecommons.org/publicdomain/zero/1.0/ */
++ 
 +function httpd_setup (handlers, port) {
 +  let port   = port || 8080;
 +  let server = new nsHttpServer();
@@ -530,6 +551,7 @@ diff --git a/services/aitc/tests/unit/head_global.js b/services/aitc/tests/unit/
 +    do_throw(ex);
 +  }
 +}
+\ No newline at end of file
 diff --git a/services/aitc/tests/unit/test_load_modules.js b/services/aitc/tests/unit/test_load_modules.js
 --- a/services/aitc/tests/unit/test_load_modules.js
 +++ b/services/aitc/tests/unit/test_load_modules.js
@@ -582,15 +604,15 @@ new file mode 100644
 +});
 +
 +add_test(function test_queue_enqueue() {
-+  // Add to queue
++  // Add to queue.
 +  let testObj = {foo: "bar"};
 +  queue.enqueue(testObj, function(err, done) {
 +    do_check_eq(err, null);
-+    do_check_eq(done, true);
++    do_check_true(done);
 +
-+    // Check if peek value is correct
++    // Check if peek value is correct.
 +    do_check_eq(queue.peek(), testObj);
-+    // Peek should be idempotent
++    // Peek should be idempotent.
 +    do_check_eq(queue.peek(), testObj);
 +
 +    run_next_test();
@@ -598,11 +620,11 @@ new file mode 100644
 +});
 +
 +add_test(function test_queue_dequeue() {
-+  // Remove an item and see if queue is empty
++  // Remove an item and see if queue is empty.
 +  queue.dequeue(function(err, done) {
 +    do_check_eq(err, null);
-+    do_check_eq(done, true);
-+    do_check_eq(queue.length(), 0);
++    do_check_true(done);
++    do_check_eq(queue.length, 0);
 +    try {
 +      queue.peek();
 +    } catch (e) {
@@ -613,67 +635,67 @@ new file mode 100644
 +});
 +
 +add_test(function test_queue_multiaddremove() {
-+  // Queues should handle objects, strings and numbers
++  // Queues should handle objects, strings and numbers.
 +  let items = [{test:"object"}, "teststring", 42];
 +
-+  // Two random numbers: how many items to queue and how many to remove
-+  let num = Math.floor(Math.random() * 100);
-+  let rem = Math.floor(Math.random() * num);
++  // Two random numbers: how many items to queue and how many to remove.
++  let num = Math.floor(Math.random() * 100 + 1);
++  let rem = Math.floor(Math.random() * num + 1);
 +
-+  // First insert all the items we will remove later
++  // First insert all the items we will remove later.
 +  for (let i = 0; i < rem; i++) {
 +    let ins = items[Math.round(Math.random() * 2)];
 +    let cb = Async.makeSpinningCallback();
 +    queue.enqueue(ins, cb);
-+    do_check_eq(cb.wait(), true);
++    do_check_true(cb.wait());
 +  }
 +
-+  do_check_eq(queue.length(), rem);
++  do_check_eq(queue.length, rem);
 +
-+  // Now insert the items we won't remove
++  // Now insert the items we won't remove.
 +  let check = [];
 +  for (let i = 0; i < (num - rem); i++) {
 +    check.push(items[Math.round(Math.random() * 2)]);
 +    let cb = Async.makeSpinningCallback();
 +    queue.enqueue(check[check.length - 1], cb);
-+    do_check_eq(cb.wait(), true);
++    do_check_true(cb.wait());
 +  }
 +
-+  do_check_eq(queue.length(), num);
++  do_check_eq(queue.length, num);
 +
-+  // Now dequeue rem items
++  // Now dequeue rem items.
 +  for (let i = 0; i < rem; i++) {
 +    let cb = Async.makeSpinningCallback();
 +    queue.dequeue(cb);
-+    do_check_eq(cb.wait(), true);
++    do_check_true(cb.wait());
 +  }
 +
-+  do_check_eq(queue.length(), num - rem);
++  do_check_eq(queue.length, num - rem);
 +
-+  // Check that the items left are the right ones
++  // Check that the items left are the right ones.
 +  do_check_eq(JSON.stringify(queue._queue), JSON.stringify(check));
 +
-+  // Another instance of the same queue should return correct data
++  // Another instance of the same queue should return correct data.
 +  let queue2 = new AitcQueue("test", function(done) {
-+    do_check_eq(done, true);
-+    do_check_eq(queue2.length(), queue.length());
++    do_check_true(done);
++    do_check_eq(queue2.length, queue.length);
 +    do_check_eq(JSON.stringify(queue._queue), JSON.stringify(queue2._queue));
 +    run_next_test();
 +  });
 +});
 +
 +add_test(function test_queue_writelock() {
-+  // Queue should not enqueue or dequeue if lock is enabled
++  // Queue should not enqueue or dequeue if lock is enabled.
 +  queue._writeLock = true;
-+  let len = queue.length();
++  let len = queue.length;
 +
 +  queue.enqueue("writeLock test", function(err, done) {
 +    do_check_eq(err.toString(), "Error: _putFile already in progress");
-+    do_check_eq(queue.length(), len);
++    do_check_eq(queue.length, len);
 +
 +    queue.dequeue(function(err, done) {
 +      do_check_eq(err.toString(), "Error: _putFile already in progress");
-+      do_check_eq(queue.length(), len);
++      do_check_eq(queue.length, len);
 +      run_next_test();
 +    });
 +  });
@@ -683,17 +705,18 @@ diff --git a/services/aitc/tests/unit/test_storage_registry.js b/services/aitc/t
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/tests/unit/test_storage_registry.js
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,124 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
 +
 +Cu.import("resource://gre/modules/Webapps.jsm");
 +Cu.import("resource://services-aitc/storage.js");
 +
++const START_PORT = 8080;
 +const SERVER = "http://localhost";
 +
 +let fakeApp1 = {
-+  origin: SERVER + ":8080",
++  origin: SERVER + ":" + START_PORT,
 +  receipts: [],
 +  manifestURL: "/manifest.webapp",
 +  installOrigin: "http://localhost",
@@ -711,7 +734,7 @@ new file mode 100644
 +};
 +
 +let fakeApp2 = {
-+  origin: SERVER + ":8081",
++  origin: SERVER + ":" + (START_PORT + 1),
 +  receipts: ["fake.jwt.token"],
 +  manifestURL: "/manifest.webapp",
 +  installOrigin: "http://localhost",
@@ -733,7 +756,7 @@ new file mode 100644
 +};
 +
 +let fakeApp3 = {
-+  origin: SERVER + ":8083", // 8082 is for the good manifest2
++  origin: SERVER + ":" + (START_PORT + 3), // 8082 is for the good manifest2
 +  receipts: [],
 +  manifestURL: "/manifest.webapp",
 +  installOrigin: "http://localhost",
@@ -756,7 +779,7 @@ new file mode 100644
 +      res.setStatusLine(req.httpVersion, 200, "OK");
 +      res.setHeader("Content-Type", "application/x-web-app-manifest+json");
 +      res.bodyOutputStream.write(response, response.length);
-+    }}, 8080 + i);
++    }}, START_PORT + i);
 +  }
 +}
 +
@@ -813,11 +836,34 @@ diff --git a/services/aitc/tests/unit/xpcshell.ini b/services/aitc/tests/unit/xp
 +++ b/services/aitc/tests/unit/xpcshell.ini
 @@ -1,6 +1,7 @@
  [DEFAULT]
- head = head_global.js
+-head = head_global.js
++head = ../../../common/tests/unit/head_global.js head_helpers.js
  tail =
  
 -# Ensure we can import everything.
  [test_load_modules.js]
 +[test_storage_queue.js]
 +[test_storage_registry.js]
+\ No newline at end of file
+diff --git a/services/common/tests/unit/head_global.js b/services/common/tests/unit/head_global.js
+--- a/services/common/tests/unit/head_global.js
++++ b/services/common/tests/unit/head_global.js
+@@ -42,16 +42,16 @@ registrar.registerFactory(Components.ID(
+                           "XULAppInfo", "@mozilla.org/xre/app-info;1",
+                           XULAppInfoFactory);
+ 
+ function addResourceAlias() {
+   Cu.import("resource://gre/modules/Services.jsm");
+   const handler = Services.io.getProtocolHandler("resource")
+                   .QueryInterface(Ci.nsIResProtocolHandler);
+ 
+-  let modules = ["common", "crypto"];
++  let modules = ["aitc", "common", "crypto"];
+   for each (let module in modules) {
+     let uri = Services.io.newURI("resource:///modules/services-" + module + "/",
+                                  null, null);
+     handler.setSubstitution("services-" + module, uri);
+   }
+ }
+ addResourceAlias();
 \ No newline at end of file
