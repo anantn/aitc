@@ -1,5 +1,6 @@
 # HG changeset patch
 # Parent 0aa7fc75cad51c23e659d75181313b0611fd7574
+# User Anant Narayanan <anant@kix.in>
 aitc-client
 
 diff --git a/browser/installer/package-manifest.in b/browser/installer/package-manifest.in
