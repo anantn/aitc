@@ -1,36 +1,10 @@
 # HG changeset patch
-# Parent 21946ec15034a1d2f59c4bbd7ec53a13b9c1636d
+# Parent 9a60ee21bb615b688ddcf3c66450b5119a0f9837
 
-diff -r 21946ec15034 services/aitc/tests/unit/head_global.js
---- a/services/aitc/tests/unit/head_global.js	Wed May 30 09:40:09 2012 -0700
-+++ b/services/aitc/tests/unit/head_global.js	Wed May 30 11:12:24 2012 -0700
-@@ -53,22 +53,3 @@
-   }
- }
- addResourceAlias();
--
--Cu.import("resource://services-common/utils.js");
--function httpd_setup (handlers, port) {
--  let port   = port || 8080;
--  let server = new nsHttpServer();
--  for (let path in handlers) {
--    server.registerPathHandler(path, handlers[path]);
--  }
--  try {
--    server.start(port);
--  } catch (ex) {
--    do_print("==========================================");
--    do_print("Got exception starting HTTP server on port " + port);
--    do_print("Error: " + CommonUtils.exceptionStr(ex));
--    do_print("Is there a process already listening on port " + port + "?");
--    do_print("==========================================");
--    do_throw(ex);
--  }
--}
-diff -r 21946ec15034 services/aitc/tests/unit/test_mock_server.js
---- /dev/null	Thu Jan 01 00:00:00 1970 +0000
-+++ b/services/aitc/tests/unit/test_mock_server.js	Wed May 30 11:12:24 2012 -0700
-@@ -0,0 +1,185 @@
+diff -r a74d3f61515a services/aitc/tests/unit/test_mock_server.js
+--- /dev/null                                     	Thu Jan 01 00:00:00 1970 +0000
++++ b/services/aitc/tests/unit/test_mock_server.js	Wed May 30 14:16:17 2012 -0700
+@@ -0,0 +1,163 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
 +
@@ -67,17 +41,20 @@ diff -r 21946ec15034 services/aitc/tests/unit/test_mock_server.js
 +  return server;
 +}
 +
-+function get_mock_app() {
++function get_mock_app(remote) {
 +
-+  return {
-+    origin: "http://example.com",
-+    manifestPath: "/manifest.webapp",
-+    installOrigin: "http://example.com",
-+    installedAt: new Date().toString(),
-+    modifiedAt: new Date().toString(),
-+    receipts: [],
++  var app = {
 +    name: "Mocking Birds",
++    origin: "http://example.com",
++    installOrigin: "http://example.com",
++    installedAt: Date.now(),
++    modifiedAt: Date.now(),
++    receipts: []
 +  };
++
++  app[(remote ? 'manifestPath' : 'manifestURL')] = "/manifest.webapp";
++
++  return app;
 +
 +}
 +
@@ -95,36 +72,8 @@ diff -r 21946ec15034 services/aitc/tests/unit/test_mock_server.js
 +  return client;
 +}
 +
-+add_test(function test_empty_user_apps() {
-+  _("Ensure apps request for empty user has appropriate content.");
-+
-+  const username = "123";
-+
-+  let server = get_server_with_user(username);
-+  let request = new RESTRequest(server.url + username + "/apps/");
-+  _("Performing request...");
-+  request.get(function onComplete(error) {
-+    _("Got response");
-+    do_check_eq(error, null);
-+
-+    do_check_eq(200, this.response.status);
-+    let headers = this.response.headers;
-+    do_check_true("content-type" in headers);
-+    do_check_eq(headers["content-type"], "application/json");
-+    do_check_true("x-timestamp" in headers);
-+
-+    let body = this.response.body;
-+    let parsed = JSON.parse(body);
-+    do_check_attribute_count(parsed, 1);
-+    do_check_true("apps" in parsed);
-+    do_check_true(Array.isArray(parsed.apps));
-+    do_check_eq(parsed.apps.length, 0);
-+
-+    server.stop(run_next_test);
-+  });
-+});
-+
 +add_test(function test_getapps_empty() {
++  _("Ensure client request for empty user has appropriate content.");
 +
 +  const username = "123";
 +
@@ -141,11 +90,11 @@ diff -r 21946ec15034 services/aitc/tests/unit/test_mock_server.js
 +    server.stop(run_next_test);
 +  });
 +
-+
 +});
 +
 +
 +add_test(function test_install_app() {
++  _("Ensure client request for installing an app has appropriate content.");
 +
 +  const username = "123";
 +  const app = get_mock_app();
@@ -153,6 +102,8 @@ diff -r 21946ec15034 services/aitc/tests/unit/test_mock_server.js
 +  let server = get_server_with_user(username);
 +
 +  let client = get_client_for_server(username, server);
++
++  _("Installing " + JSON.stringify(app));
 +
 +  client.remoteInstall(app, function(error, status) {
 +    _("Got response");
@@ -181,12 +132,13 @@ diff -r 21946ec15034 services/aitc/tests/unit/test_mock_server.js
 +});
 +
 +add_test(function test_uninstall_app() {
++  _("Ensure client request for un-installing an app has appropriate content.");
 +
 +  const username = "123";
 +  const app = get_mock_app();
 +
 +  let server = get_server_with_user(username);
-+  server.users[username].addApp(app);
++  server.users[username].addApp(get_mock_app(true));
 +
 +  let client = get_client_for_server(username, server);
 +
@@ -216,19 +168,3 @@ diff -r 21946ec15034 services/aitc/tests/unit/test_mock_server.js
 +});
 +
 +
-diff -r 21946ec15034 services/aitc/tests/unit/xpcshell.ini
---- a/services/aitc/tests/unit/xpcshell.ini	Wed May 30 09:40:09 2012 -0700
-+++ b/services/aitc/tests/unit/xpcshell.ini	Wed May 30 11:12:24 2012 -0700
-@@ -1,7 +1,8 @@
- [DEFAULT]
--head = head_global.js
-+head = head_global.js ../../../common/tests/unit/head_helpers.js
- tail =
- 
- [test_load_modules.js]
- [test_storage_queue.js]
--[test_storage_registry.js]
-\ No newline at end of file
-+[test_storage_registry.js]
-+[test_mock_server.js]
-\ No newline at end of file

@@ -1,17 +1,12 @@
 # HG changeset patch
-# Parent f4955d64021b69ecae03873afdeec222e73498f9
+# Parent 284c2ed12aad23915df651be9b2b0320b48d7bc0
 # User Gregory Szorc <gps@mozilla.com>
 Bug 744323 - JS implementation of storage service 2.0 server
 
 diff --git a/services/common/Makefile.in b/services/common/Makefile.in
 --- a/services/common/Makefile.in
 +++ b/services/common/Makefile.in
-@@ -26,9 +26,26 @@
- module_dir = $(FINAL_TARGET)/modules/services-common
- 
- libs::
- 	$(NSINSTALL) -D $(module_dir)
- 	$(NSINSTALL) $(source_modules) $(module_dir)
+@@ -31,4 +31,21 @@
  
  TEST_DIRS += tests
  
@@ -29,15 +24,15 @@ diff --git a/services/common/Makefile.in b/services/common/Makefile.in
 +head_path = $(srcdir)/tests/unit
 +
 +storage-server:
-+	$(PYTHON) $(srcdir)/tests/run_server.py $(topsrcdir) \
-+	  $(MOZ_BUILD_ROOT) run_storage_server.js $(storage_server_port)
++ $(PYTHON) $(srcdir)/tests/run_server.py $(topsrcdir) \
++   $(MOZ_BUILD_ROOT) run_storage_server.js --port $(storage_server_port)
 +
  include $(topsrcdir)/config/rules.mk
 diff --git a/services/common/storageserver.js b/services/common/storageserver.js
 new file mode 100644
 --- /dev/null
 +++ b/services/common/storageserver.js
-@@ -0,0 +1,1634 @@
+@@ -0,0 +1,1635 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -311,14 +306,14 @@ new file mode 100644
 +   * We can't just use the timestamps of contained BSOs: an empty collection
 +   * has a modified time.
 +   */
-+   CommonUtils.ensureMillisecondsTimestamp(timestamp);
++  CommonUtils.ensureMillisecondsTimestamp(timestamp);
 +
 +  this.timestamp = timestamp || new_timestamp();
 +  this._log = Log4Moz.repository.getLogger(STORAGE_HTTP_LOGGER);
 +}
 +StorageServerCollection.prototype = {
-+  BATCH_MAX_COUNT: 100,
-+  BATCH_MAX_SIZE: 1024 * 1024,
++  BATCH_MAX_COUNT: 100,         // # of records.
++  BATCH_MAX_SIZE: 1024 * 1024,  // # bytes.
 +
 +  _timestamp: null,
 +
@@ -339,6 +334,7 @@ new file mode 100644
 +
 +    return size;
 +  },
++
 +  /**
 +   * Convenience accessor for our BSO keys.
 +   * Excludes deleted items, of course.
@@ -428,7 +424,7 @@ new file mode 100644
 +    delete this._bsos[id];
 +  },
 +
-+  _inResultSet: function(bso, options) {
++  _inResultSet: function _inResultSet(bso, options) {
 +    if (!bso.payload) {
 +      return false;
 +    }
@@ -440,13 +436,13 @@ new file mode 100644
 +    }
 +
 +    if (options.newer) {
-+      if (bso.modified <= options.newer) {
++      if (bso.modified < options.newer) {
 +        return false;
 +      }
 +    }
 +
 +    if (options.older) {
-+      if (bso.modified >= options.older) {
++      if (bso.modified > options.older) {
 +        return false;
 +      }
 +    }
@@ -474,7 +470,7 @@ new file mode 100644
 +    return true;
 +  },
 +
-+  count: function(options) {
++  count: function count(options) {
 +    options = options || {};
 +    let c = 0;
 +    for (let [id, bso] in Iterator(this._bsos)) {
@@ -485,7 +481,7 @@ new file mode 100644
 +    return c;
 +  },
 +
-+  get: function(options) {
++  get: function get(options) {
 +    let data = [];
 +    for each (let bso in this._bsos) {
 +      if (!bso.modified) {
@@ -542,7 +538,7 @@ new file mode 100644
 +    return data;
 +  },
 +
-+  post: function(input, timestamp) {
++  post: function post(input, timestamp) {
 +    let success = [];
 +    let failed = {};
 +    let count = 0;
@@ -616,7 +612,7 @@ new file mode 100644
 +    return {success: success, failed: failed};
 +  },
 +
-+  delete: function(options) {
++  delete: function delete(options) {
 +    options = options || {};
 +
 +    // Protocol 2.0 only allows the "ids" query string argument.
@@ -900,7 +896,7 @@ new file mode 100644
 +  handler._handleDefault = this.handleDefault.bind(this, handler);
 +}
 +StorageServer.prototype = {
-+  DEFAULT_QUOTA: 1024 * 1024,
++  DEFAULT_QUOTA: 1024 * 1024, // # bytes.
 +
 +  port:   8080,
 +  server: null,    // HttpServer.
@@ -1676,13 +1672,14 @@ diff --git a/services/common/tests/run_server.py b/services/common/tests/run_ser
 new file mode 100755
 --- /dev/null
 +++ b/services/common/tests/run_server.py
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,79 @@
 +#!/usr/bin/python
 +
 +# This Source Code Form is subject to the terms of the Mozilla Public
 +# License, v. 2.0. If a copy of the MPL was not distributed with this file,
 +# You can obtain one at http://mozilla.org/MPL/2.0/.
 +
++from argparse import ArgumentParser
 +from shutil import rmtree
 +from subprocess import Popen
 +from sys import argv
@@ -1692,12 +1689,8 @@ new file mode 100755
 +DEFAULT_PORT = 8080
 +DEFAULT_HOSTNAME = 'localhost'
 +
-+def run_server(srcdir, objdir, js_file, hostname=None, port=None):
-+    if hostname is None:
-+        hostname = DEFAULT_HOSTNAME
-+
-+    if port is None:
-+        port = DEFAULT_PORT
++def run_server(srcdir, objdir, js_file, hostname=DEFAULT_HOSTNAME,
++        port=DEFAULT_PORT):
 +
 +    dist_dir = '%s/dist' % objdir
 +    head_dir = '%s/services/common/tests/unit' % srcdir
@@ -1743,18 +1736,22 @@ new file mode 100755
 +        rmtree(profile_dir)
 +
 +if __name__ == '__main__':
-+    if len(argv) == 4:
-+        exit(run_server(argv[1], argv[2], argv[3]))
++    parser = ArgumentParser(description="Run a standalone JS server.")
++    parser.add_argument('srcdir',
++        help="Root directory of Firefox source code.")
++    parser.add_argument('objdir',
++        help="Root directory object directory created during build.")
++    parser.add_argument('js_file',
++        help="JS file (in this directory) to execute.")
++    parser.add_argument('--port', default=DEFAULT_PORT, type=int,
++        help="Port to run server on.")
++    parser.add_argument('--address', default=DEFAULT_HOSTNAME,
++        help="Hostname to bind server to.")
 +
-+    if len(argv) == 5:
-+        exit(run_server(argv[1], argv[2], argv[3], port=argv[4]))
++    args = parser.parse_args()
 +
-+    if len(argv) == 6:
-+        exit(run_server(argv[1], argv[2], argv[3], port=argv[4],
-+            hostname=argv[5]))
-+
-+    print 'Usage: %s /path/to/srcdir /path/to/objdir [js_file] [port] [address]'
-+    exit(1)
++    exit(run_server(args.srcdir, args.objdir, args.js_file, args.address,
++        args.port))
 diff --git a/services/common/tests/run_storage_server.js b/services/common/tests/run_storage_server.js
 new file mode 100644
 --- /dev/null
@@ -1788,10 +1785,7 @@ new file mode 100644
 diff --git a/services/common/tests/unit/head_helpers.js b/services/common/tests/unit/head_helpers.js
 --- a/services/common/tests/unit/head_helpers.js
 +++ b/services/common/tests/unit/head_helpers.js
-@@ -1,14 +1,15 @@
- /* This Source Code Form is subject to the terms of the Mozilla Public
-  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
-  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+@@ -4,6 +4,7 @@
  
  Cu.import("resource://testing-common/httpd.js");
  Cu.import("resource://services-common/log4moz.js");
@@ -1799,17 +1793,7 @@ diff --git a/services/common/tests/unit/head_helpers.js b/services/common/tests/
  
  let btoa = Cu.import("resource://services-common/log4moz.js").btoa;
  let atob = Cu.import("resource://services-common/log4moz.js").atob;
- 
- function do_check_empty(obj) {
-   do_check_attribute_count(obj, 0);
- }
- 
-@@ -85,17 +86,17 @@
-   for (let path in handlers) {
-     server.registerPathHandler(path, handlers[path]);
-   }
-   try {
-     server.start(port);
+@@ -90,7 +91,7 @@
    } catch (ex) {
      _("==========================================");
      _("Got exception starting HTTP server on port " + port);
@@ -1818,17 +1802,7 @@ diff --git a/services/common/tests/unit/head_helpers.js b/services/common/tests/
      _("Is there a process already listening on port " + port + "?");
      _("==========================================");
      do_throw(ex);
-   }
- 
-   return server;
- }
- 
-@@ -113,24 +114,17 @@
-   };
- }
- 
- /*
-  * Read bytes string from an nsIInputStream.  If 'count' is omitted,
+@@ -118,14 +119,7 @@
   * all available input is read.
   */
  function readBytesFromInputStream(inputStream, count) {
@@ -1844,11 +1818,6 @@ diff --git a/services/common/tests/unit/head_helpers.js b/services/common/tests/
  }
  
  /*
-  * Ensure exceptions from inside callbacks leads to test failures.
-  */
- function ensureThrows(func) {
-   return function() {
-     try {
 diff --git a/services/common/tests/unit/head_http.js b/services/common/tests/unit/head_http.js
 new file mode 100644
 --- /dev/null
@@ -1886,12 +1855,7 @@ new file mode 100644
 diff --git a/services/common/tests/unit/test_load_modules.js b/services/common/tests/unit/test_load_modules.js
 --- a/services/common/tests/unit/test_load_modules.js
 +++ b/services/common/tests/unit/test_load_modules.js
-@@ -6,14 +6,23 @@
-   "log4moz.js",
-   "preferences.js",
-   "rest.js",
-   "stringbundle.js",
-   "tokenserverclient.js",
+@@ -11,9 +11,18 @@
    "utils.js",
  ];
  
@@ -1914,7 +1878,7 @@ diff --git a/services/common/tests/unit/test_storage_server.js b/services/common
 new file mode 100644
 --- /dev/null
 +++ b/services/common/tests/unit/test_storage_server.js
-@@ -0,0 +1,514 @@
+@@ -0,0 +1,516 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
 +
@@ -1924,17 +1888,19 @@ new file mode 100644
 +Cu.import("resource://testing-common/services-common/storageserver.js");
 +
 +const PORT = 8080;
++const DEFAULT_USER = "123";
++const DEFAULT_PASSWORD = "password";
 +
 +/**
 + * Helper function to prepare a RESTRequest against the server.
 + */
-+function localRequest(path, user, password) {
++function localRequest(path, user=DEFAULT_USER, password=DEFAULT_PASSWORD) {
 +  _("localRequest: " + path);
 +  let url = "http://127.0.0.1:" + PORT + path;
 +  _("url: " + url);
 +  let req = new RESTRequest(url);
 +
-+  let header = basic_auth_header(user || "123", password || "password");
++  let header = basic_auth_header(user, password);
 +  req.setHeader("Authorization", header);
 +  req.setHeader("Accept", "application/json");
 +
@@ -1947,10 +1913,8 @@ new file mode 100644
 +function validateResponse(response) {
 +  do_check_true("x-timestamp" in response.headers);
 +
-+  let cl;
-+
 +  if ("content-length" in response.headers) {
-+    cl = parseInt(response.headers["content-length"]);
++    let cl = parseInt(response.headers["content-length"]);
 +
 +    if (cl != 0) {
 +      do_check_true("content-type" in response.headers);
@@ -1972,12 +1936,9 @@ new file mode 100644
 +}
 +
 +/**
-+ * Helper function to perform GET request synchronously.
++ * Helper function to synchronously wait for a response and validate it.
 + */
-+function doGetRequest(request) {
-+  let cb = Async.makeSpinningCallback();
-+  request.get(cb);
-+
++function waitAndValidateResponse(cb, request) {
 +  let error = cb.wait();
 +
 +  if (!error) {
@@ -1988,34 +1949,39 @@ new file mode 100644
 +}
 +
 +/**
-+ * Helper function to synchronously do a PUT request.
++ * Helper function to synchronously perform a GET request.
 + *
-+ * Returns Error passed into onComplete callback.
++ * @return Error instance or null if no error.
++ */
++function doGetRequest(request) {
++  let cb = Async.makeSpinningCallback();
++  request.get(cb);
++
++  return waitAndValidateResponse(cb, request);
++}
++
++/**
++ * Helper function to synchronously perform a PUT request.
++ *
++ * @return Error instance or null if no error.
 + */
 +function doPutRequest(request, data) {
 +  let cb = Async.makeSpinningCallback();
 +  request.put(data, cb);
 +
-+  let error = cb.wait();
-+
-+  if (!error) {
-+    validateResponse(request.response);
-+  }
-+
-+  return error;
++  return waitAndValidateResponse(cb, request);
 +}
 +
++/**
++ * Helper function to synchronously perform a DELETE request.
++ *
++ * @return Error or null if no error was encountered.
++ */
 +function doDeleteRequest(request) {
 +  let cb = Async.makeSpinningCallback();
 +  request.delete(cb);
 +
-+  let error = cb.wait();
-+
-+  if (!error) {
-+    validateResponse(request.response);
-+  }
-+
-+  return error;
++  return waitAndValidateResponse(cb, request);
 +}
 +
 +function run_test() {
@@ -2432,24 +2398,14 @@ new file mode 100644
 diff --git a/services/common/tests/unit/xpcshell.ini b/services/common/tests/unit/xpcshell.ini
 --- a/services/common/tests/unit/xpcshell.ini
 +++ b/services/common/tests/unit/xpcshell.ini
-@@ -1,10 +1,10 @@
+@@ -1,5 +1,5 @@
  [DEFAULT]
 -head = head_global.js head_helpers.js
 +head = head_global.js head_helpers.js head_http.js
  tail =
  
  # Test load modules first so syntax failures are caught early.
- [test_load_modules.js]
- 
- [test_utils_atob.js]
- [test_utils_encodeBase32.js]
- [test_utils_json.js]
-@@ -16,8 +16,10 @@
- [test_async_chain.js]
- [test_async_querySpinningly.js]
- [test_log4moz.js]
- [test_observers.js]
- [test_preferences.js]
+@@ -21,3 +21,5 @@
  [test_restrequest.js]
  [test_tokenauthenticatedrequest.js]
  [test_tokenserverclient.js]
@@ -2458,12 +2414,7 @@ diff --git a/services/common/tests/unit/xpcshell.ini b/services/common/tests/uni
 diff --git a/services/common/utils.js b/services/common/utils.js
 --- a/services/common/utils.js
 +++ b/services/common/utils.js
-@@ -90,16 +90,30 @@
-   nextTick: function nextTick(callback, thisObj) {
-     if (thisObj) {
-       callback = callback.bind(thisObj);
-     }
-     Services.tm.currentThread.dispatch(callback, Ci.nsIThread.DISPATCH_NORMAL);
+@@ -95,6 +95,20 @@
    },
  
    /**
@@ -2484,17 +2435,7 @@ diff --git a/services/common/utils.js b/services/common/utils.js
     * Return a timer that is scheduled to call the callback after waiting the
     * provided time or as soon as possible. The timer will be set as a property
     * of the provided object with the given timer name.
-    */
-   namedTimer: function namedTimer(callback, wait, thisObj, name) {
-     if (!thisObj || !name) {
-       throw "You must provide both an object and a property name for the timer!";
-     }
-@@ -378,16 +392,69 @@
-     let fos = FileUtils.openSafeFileOutputStream(file);
-     let is = this._utf8Converter.convertToInputStream(out);
-     NetUtil.asyncCopy(is, fos, function (result) {
-       if (typeof callback == "function") {
-         callback.call(that);
+@@ -383,6 +397,58 @@
        }
      });
    },
@@ -2516,11 +2457,6 @@ diff --git a/services/common/utils.js b/services/common/utils.js
 +      return;
 +    }
 +
-+    return;
-+    if (Math.floor(value) != Math.ceil(value)) {
-+      throw new Error("Timestamp value is not an integer: " + value);
-+    }
-+
 +    if (value < 0) {
 +      throw new Error("Timestamp value is negative: " + value);
 +    }
@@ -2528,6 +2464,10 @@ diff --git a/services/common/utils.js b/services/common/utils.js
 +    // Catch what looks like seconds, not milliseconds.
 +    if (value < 10000000000) {
 +      throw new Error("Timestamp appears to be in seconds: " + value);
++    }
++
++    if (Math.floor(value) != Math.ceil(value)) {
++      throw new Error("Timestamp value is not an integer: " + value);
 +    }
 +  },
 +
@@ -2554,8 +2494,3 @@ diff --git a/services/common/utils.js b/services/common/utils.js
  };
  
  XPCOMUtils.defineLazyGetter(CommonUtils, "_utf8Converter", function() {
-   let converter = Cc["@mozilla.org/intl/scriptableunicodeconverter"]
-                     .createInstance(Ci.nsIScriptableUnicodeConverter);
-   converter.charset = "UTF-8";
-   return converter;
- });

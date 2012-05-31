@@ -1,37 +1,48 @@
 # HG changeset patch
-# Parent c48a8cdc35c22220080e551db265f25b13167902
+# Parent 7bb35f13d11562cad8e77f8e927756cd152f2a24
 # User Gregory Szorc <gps@mozilla.com>
-Bug 749336 - Implement AITC 1.0 server in JavaScript (for testing)
+Bug 749336 - JS implementation of AITC 1.0 server
 
-diff -r c48a8cdc35c2 services/common/Makefile.in
---- a/services/common/Makefile.in	Tue May 29 15:54:59 2012 -0700
-+++ b/services/common/Makefile.in	Tue May 29 15:59:30 2012 -0700
-@@ -31,7 +31,7 @@
+diff -r 7bb35f13d115 services/common/Makefile.in
+--- a/services/common/Makefile.in	Wed May 30 16:48:17 2012 -0700
++++ b/services/common/Makefile.in	Wed May 30 16:54:46 2012 -0700
+@@ -31,4 +31,30 @@
  
  TEST_DIRS += tests
  
--TESTING_JS_MODULES := storageserver.js
-+TESTING_JS_MODULES := storageserver.js aitcserver.js
- TESTING_JS_MODULE_DIR := services-common
- 
- # What follows is a helper to launch a standalone storage server instance.
-@@ -48,4 +48,12 @@
- 	$(PYTHON) $(srcdir)/tests/run_server.py $(topsrcdir) \
- 	  $(MOZ_BUILD_ROOT) run_storage_server.js $(storage_server_port)
- 
+-include $(topsrcdir)/config/rules.mk
++TESTING_JS_MODULES := storageserver.js storageserver.js
++TESTING_JS_MODULE_DIR := services-common
++
++# What follows is a helper to launch a standalone storage server instance.
++# Most of the code lives in a Python script in the tests directory. If we
++# ever consolidate our Python code, and/or have a supplemental driver for the
++# build system, this can go away.
++
++storage_server_hostname := localhost
++storage_server_port := 8080
++
++head_path = $(srcdir)/tests/unit
++
++storage-server:
++ $(PYTHON) $(srcdir)/tests/run_server.py $(topsrcdir) \
++   $(MOZ_BUILD_ROOT) run_storage_server.js --port $(storage_server_port)
++
 +# And the same thing for an AITC server.
 +aitc_server_hostname := localhost
 +aitc_server_port := 8080
 +
 +aitc-server:
-+	$(PYTHON) $(srcdir)/tests/run_server.py $(topsrcdir) \
-+		$(MOZ_BUILD_ROOT) run_aitc_server.js $(aitc_server_port)
++ $(PYTHON) $(srcdir)/tests/run_server.py $(topsrcdir) \
++   $(MOZ_BUILD_ROOT) run_aitc_server.js --port $(aitc_server_port)
 +
- include $(topsrcdir)/config/rules.mk
-diff -r c48a8cdc35c2 services/common/aitcserver.js
++
++include $(topsrcdir)/config/rules.mk
+\ No newline at end of file
+diff -r 7bb35f13d115 services/common/aitcserver.js
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
-+++ b/services/common/aitcserver.js	Tue May 29 15:59:30 2012 -0700
-@@ -0,0 +1,499 @@
++++ b/services/common/aitcserver.js	Wed May 30 16:54:46 2012 -0700
+@@ -0,0 +1,523 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -57,6 +68,7 @@ diff -r c48a8cdc35c2 services/common/aitcserver.js
 + * user's data.
 + */
 +function AITCServer10User() {
++  this._log = Log4Moz.repository.getLogger("Services.Common.AITCServer");
 +  this.apps = {};
 +}
 +AITCServer10User.prototype = {
@@ -117,7 +129,7 @@ diff -r c48a8cdc35c2 services/common/aitcserver.js
 +
 +    for each (let k in this.requiredAppProperties) {
 +      if (!(k in app)) {
-+        throw new Error("Required propertt not in app record: " + k);
++        throw new Error("Required property not in app record: " + k);
 +      }
 +    }
 +
@@ -143,7 +155,7 @@ diff -r c48a8cdc35c2 services/common/aitcserver.js
 +   */
 +  originToID: function originToID(origin) {
 +    let hash = CryptoUtils.UTF8AndSHA1(origin);
-+    return CommonUtils.encodeBase64URL(hash);
++    return CommonUtils.encodeBase64URL(hash).replace(/=+$/, "");
 +  },
 +};
 +
@@ -311,6 +323,11 @@ diff -r c48a8cdc35c2 services/common/aitcserver.js
 +    try {
 +      handler();
 +    } catch (ex) {
++      if (ex instanceof HttpError) {
++        response.setStatusLine(request.httpVersion, ex.code, ex.description);
++        return;
++      }
++
 +      this._log.warn("Exception when processing request: " +
 +                     CommonUtils.exceptionStr(ex));
 +      throw ex;
@@ -356,7 +373,7 @@ diff -r c48a8cdc35c2 services/common/aitcserver.js
 +        newest = app.modifiedAt;
 +      }
 +
-+      if ("after" in options && app.modifiedAt < options.after) {
++      if ("after" in options && app.modifiedAt <= options.after) {
 +        continue;
 +      }
 +
@@ -365,7 +382,7 @@ diff -r c48a8cdc35c2 services/common/aitcserver.js
 +
 +    if (request.hasHeader("X-If-Modified-Since")) {
 +      let modified = parseInt(request.getHeader("X-If-Modified-Since"), 10);
-+      if (modified > newest) {
++      if (modified >= newest) {
 +        response.setStatusLine(request.httpVersion, 304, "Not Modified");
 +        return;
 +      }
@@ -406,7 +423,10 @@ diff -r c48a8cdc35c2 services/common/aitcserver.js
 +    if (request.hasHeader("X-If-Modified-Since")) {
 +      let modified = parseInt(request.getHeader("X-If-Modified-Since"), 10);
 +
-+      if (modified > app.modifiedAt) {
++      this._log.debug("Client time: " + modified + "; Server time: " +
++                      app.modifiedAt);
++
++      if (modified >= app.modifiedAt) {
 +        response.setStatusLine(request.httpVersion, 304, "Not Modified");
 +        return;
 +      }
@@ -432,7 +452,8 @@ diff -r c48a8cdc35c2 services/common/aitcserver.js
 +      throw HTTP_415;
 +    }
 +
-+    let requestBody = CommonUtils.readBytesFromInputStream(request.bodyInputStream);
++    let requestBody = CommonUtils.readBytesFromInputStream(
++                                    request.bodyInputStream);
 +    this._log.debug("Request body: " + requestBody);
 +    if (requestBody.length > 8192) {
 +      this._log.info("Request body too long: " + requestBody.length);
@@ -449,6 +470,13 @@ diff -r c48a8cdc35c2 services/common/aitcserver.js
 +      throw HTTP_400;
 +    }
 +
++    // URL and record mismatch.
++    if (user.originToID(app.origin) != id) {
++      this._log.warn("URL ID and origin mismatch. URL: " + id + "; Record: " +
++                     user.originToID(app.origin));
++      throw HTTP_403;
++    }
++
 +    if (request.hasHeader("X-If-Unmodified-Since") && hadApp) {
 +      let modified = parseInt(request.getHeader("X-If-Unmodified-Since"), 10);
 +      let existing = user.getAppByID(id);
@@ -461,6 +489,13 @@ diff -r c48a8cdc35c2 services/common/aitcserver.js
 +
 +    try {
 +      app.modifiedAt = response.dispatchTime;
++
++      if (hadApp) {
++        app.installedAt = user.getAppByID(id).installedAt;
++      } else {
++        app.installedAt = response.dispatchTime;
++      }
++
 +      user.addApp(app);
 +    } catch (e) {
 +      this._log.info("Error adding app: " + CommonUtils.exceptionStr(e));
@@ -531,10 +566,10 @@ diff -r c48a8cdc35c2 services/common/aitcserver.js
 +  },
 +};
 +
-diff -r c48a8cdc35c2 services/common/tests/run_aitc_server.js
+diff -r 7bb35f13d115 services/common/tests/run_aitc_server.js
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
-+++ b/services/common/tests/run_aitc_server.js	Tue May 29 15:59:30 2012 -0700
-@@ -0,0 +1,25 @@
++++ b/services/common/tests/run_aitc_server.js	Wed May 30 16:54:46 2012 -0700
+@@ -0,0 +1,26 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -554,15 +589,16 @@ diff -r c48a8cdc35c2 services/common/tests/run_aitc_server.js
 +initTestLogging();
 +
 +let server = new AITCServer10Server();
++server.autoCreateUsers = true;
 +server.start(SERVER_PORT);
 +
 +_("AITC server started on port " + SERVER_PORT);
 +
 +// Launch the thread manager.
 +_do_main();
-diff -r c48a8cdc35c2 services/common/tests/unit/head_helpers.js
---- a/services/common/tests/unit/head_helpers.js	Tue May 29 15:54:59 2012 -0700
-+++ b/services/common/tests/unit/head_helpers.js	Tue May 29 15:59:30 2012 -0700
+diff -r 7bb35f13d115 services/common/tests/unit/head_helpers.js
+--- a/services/common/tests/unit/head_helpers.js	Wed May 30 16:48:17 2012 -0700
++++ b/services/common/tests/unit/head_helpers.js	Wed May 30 16:54:46 2012 -0700
 @@ -59,13 +59,15 @@
    };
    LogStats.prototype.__proto__ = new Log4Moz.Formatter();
@@ -600,9 +636,9 @@ diff -r c48a8cdc35c2 services/common/tests/unit/head_helpers.js
  function httpd_setup (handlers, port) {
    let port   = port || 8080;
    let server = new HttpServer();
-diff -r c48a8cdc35c2 services/common/tests/unit/test_aitc_server.js
+diff -r 7bb35f13d115 services/common/tests/unit/test_aitc_server.js
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
-+++ b/services/common/tests/unit/test_aitc_server.js	Tue May 29 15:59:30 2012 -0700
++++ b/services/common/tests/unit/test_aitc_server.js	Wed May 30 16:54:46 2012 -0700
 @@ -0,0 +1,139 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -743,9 +779,9 @@ diff -r c48a8cdc35c2 services/common/tests/unit/test_aitc_server.js
 +    server.stop(run_next_test);
 +  });
 +});
-diff -r c48a8cdc35c2 services/common/tests/unit/test_load_modules.js
---- a/services/common/tests/unit/test_load_modules.js	Tue May 29 15:54:59 2012 -0700
-+++ b/services/common/tests/unit/test_load_modules.js	Tue May 29 15:59:30 2012 -0700
+diff -r 7bb35f13d115 services/common/tests/unit/test_load_modules.js
+--- a/services/common/tests/unit/test_load_modules.js	Wed May 30 16:48:17 2012 -0700
++++ b/services/common/tests/unit/test_load_modules.js	Wed May 30 16:54:46 2012 -0700
 @@ -12,6 +12,7 @@
  ];
  
@@ -754,9 +790,9 @@ diff -r c48a8cdc35c2 services/common/tests/unit/test_load_modules.js
    "storageserver.js",
  ];
  
-diff -r c48a8cdc35c2 services/common/tests/unit/xpcshell.ini
---- a/services/common/tests/unit/xpcshell.ini	Tue May 29 15:54:59 2012 -0700
-+++ b/services/common/tests/unit/xpcshell.ini	Tue May 29 15:59:30 2012 -0700
+diff -r 7bb35f13d115 services/common/tests/unit/xpcshell.ini
+--- a/services/common/tests/unit/xpcshell.ini	Wed May 30 16:48:17 2012 -0700
++++ b/services/common/tests/unit/xpcshell.ini	Wed May 30 16:54:46 2012 -0700
 @@ -13,6 +13,7 @@
  [test_utils_stackTrace.js]
  [test_utils_utf8.js]
