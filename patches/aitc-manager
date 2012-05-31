@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 0695f73d6ba1633f7e6f8615353de5966c825585
+# Parent 43002128acba7a92589cf9e5c11386f0d85bdee1
 # User Anant Narayanan <anant@kix.in>
 try: -b do -p all -u all -t all
 
@@ -544,7 +544,7 @@ new file mode 100644
 +    }
 +
 +    // Check if there are any PUTs pending first.
-+    if (this._pending.length() && !(this._putTimer)) {
++    if (this._pending.length && !(this._putTimer)) {
 +      // There are pending PUTs and no timer, so let's process them. GETs will
 +      // resume after the PUTs finish (see processQueue)
 +      this._processQueue();
@@ -586,7 +586,7 @@ new file mode 100644
 +      throw new Error("_checkServer called without a client");
 +    }
 +
-+    if (this._pending.length()) {
++    if (this._pending.length) {
 +      this._log.warn("_checkServer aborted because of pending PUTs");
 +      return;
 +    }
@@ -625,7 +625,7 @@ new file mode 100644
 +    if (!this._client) {
 +      throw new Error("_processQueue called without a client");
 +    }
-+    if (!this._pending.length()) {
++    if (!this._pending.length) {
 +      throw new Error("_processQueue called with an empty queue");
 +    }
 +
@@ -684,7 +684,7 @@ new file mode 100644
 +
 +      // We just finished PUTting an object, try the next one immediately,
 +      // but only if haven't tried it already in the last putFreq (ms).
-+      if (!self._pending.length()) {
++      if (!self._pending.length) {
 +        // Start GET timer now that we're done with PUTs.
 +        self._setPoll();
 +        return;
