@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 6c08cae208b73e60fd12d810c4af1e831f8e07f7
+# Parent 0695f73d6ba1633f7e6f8615353de5966c825585
 # User Anant Narayanan <anant@kix.in>
 try: -b do -p all -u all -t all
 
@@ -24,6 +24,24 @@ diff --git a/browser/installer/package-manifest.in b/browser/installer/package-m
  @BINPATH@/components/SettingsManager.js
  @BINPATH@/components/SettingsManager.manifest
  @BINPATH@/components/Webapps.js
+@@ -508,16 +509,17 @@
+ 
+ ; [Default Preferences]
+ ; All the pref files must be part of base to prevent migration bugs
+ @BINPATH@/@PREF_DIR@/firefox.js
+ @BINPATH@/@PREF_DIR@/firefox-branding.js
+ @BINPATH@/@PREF_DIR@/channel-prefs.js
+ #ifdef MOZ_SERVICES_SYNC
+ @BINPATH@/@PREF_DIR@/services-sync.js
++@BINPATH@/@PREF_DIR@/services-aitc.js
+ #endif
+ @BINPATH@/greprefs.js
+ @BINPATH@/defaults/autoconfig/platform.js
+ @BINPATH@/defaults/autoconfig/prefcalls.js
+ @BINPATH@/defaults/profile/prefs.js
+ 
+ ; [Layout Engine Resources]
+ ; Style Sheets, Graphics and other Resources used by the layout engine. 
 diff --git a/services/aitc/service.js b/services/aitc/Aitc.js
 rename from services/aitc/service.js
 rename to services/aitc/Aitc.js

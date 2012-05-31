@@ -1,11 +1,11 @@
 # HG changeset patch
-# Parent 7e300da1911690153bb008b832a9e439f2dcdfcb
+# Parent ff6d98835f0009e43a28ae3a295a9c8cf10c3e34
 
 diff --git a/services/aitc/modules/browserid.js b/services/aitc/modules/browserid.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/browserid.js
-@@ -0,0 +1,451 @@
+@@ -0,0 +1,449 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -403,9 +403,7 @@ new file mode 100644
 +   *         (iframe) An empty, hidden iframe
 +   */
 +  _createFrame: function _createFrame() {
-+    let aSvc = Cc["@mozilla.org/appshell/appShellService;1"]
-+               .getService(Ci.nsIAppShellService);
-+    let doc = aSvc.hiddenDOMWindow.document;
++    let doc = Services.wm.getMostRecentWindow("navigator:browser").document;
 +
 +    // Insert iframe in to create docshell.
 +    let frame = doc.createElement("iframe");
