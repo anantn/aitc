@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent ff6d98835f0009e43a28ae3a295a9c8cf10c3e34
+# Parent 0dbabae09c0e97ef30ea1d9ba72f36756c5d87f7
 
 diff --git a/services/aitc/modules/browserid.js b/services/aitc/modules/browserid.js
 new file mode 100644
@@ -459,14 +459,16 @@ new file mode 100644
 diff --git a/services/aitc/services-aitc.js b/services/aitc/services-aitc.js
 --- a/services/aitc/services-aitc.js
 +++ b/services/aitc/services-aitc.js
-@@ -1,2 +1,5 @@
+@@ -1,2 +1,7 @@
 +pref("services.aitc.browserid.url", "https://browserid.org/sign_in");
 +pref("services.aitc.browserid.log.level", "Debug");
- pref("services.aitc.client.log.level", "Debug");
--pref("services.aitc.storage.log.level", "Debug");
-\ No newline at end of file
-+pref("services.aitc.storage.log.level", "Debug");
 +
+ pref("services.aitc.client.log.level", "Debug");
+-pref("services.aitc.storage.log.level", "Debug");pref("services.aitc.client.timeout", 120);
+\ No newline at end of file
++pref("services.aitc.client.timeout", 120);
++
++pref("services.aitc.storage.log.level", "Debug");
 diff --git a/services/aitc/tests/Makefile.in b/services/aitc/tests/Makefile.in
 --- a/services/aitc/tests/Makefile.in
 +++ b/services/aitc/tests/Makefile.in

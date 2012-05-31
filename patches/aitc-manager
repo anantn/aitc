@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent bde2498e4058ffac14f52c4525f61db12392295d
+# Parent 9929268c069a190e0102f5aaf249f0bfceafccae
 # User Anant Narayanan <anant@kix.in>
 try: -b do -p all -u all -t all
 
@@ -830,26 +830,25 @@ new file mode 100644
 diff --git a/services/aitc/services-aitc.js b/services/aitc/services-aitc.js
 --- a/services/aitc/services-aitc.js
 +++ b/services/aitc/services-aitc.js
-@@ -1,5 +1,20 @@
+@@ -1,7 +1,19 @@
  pref("services.aitc.browserid.url", "https://browserid.org/sign_in");
  pref("services.aitc.browserid.log.level", "Debug");
-+
+ 
  pref("services.aitc.client.log.level", "Debug");
-+
+ pref("services.aitc.client.timeout", 120);
+ 
 +pref("services.aitc.dashboard.url", "https://myapps.mozillalabs.com");
 +
 +pref("services.aitc.main.idleTime", 120000); // 2 minutes
-+
 +pref("services.aitc.manager.putFreq", 10000); // 10 seconds
 +pref("services.aitc.manager.getActiveFreq", 120000); // 2 minutes
 +pref("services.aitc.manager.getPassiveFreq", 7200000); // 2 hours
 +pref("services.aitc.manager.log.level", "Debug");
-+
 +pref("services.aitc.marketplace.url", "https://marketplace.mozilla.org");
 +
 +pref("services.aitc.service.log.level", "Debug");
  pref("services.aitc.storage.log.level", "Debug");
- 
++
 +pref("services.aitc.tokenServer.url", "https://stage-token.services.mozilla.com");
 diff --git a/services/aitc/tests/unit/test_load_modules.js b/services/aitc/tests/unit/test_load_modules.js
 --- a/services/aitc/tests/unit/test_load_modules.js
