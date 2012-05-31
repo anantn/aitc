@@ -5,8 +5,11 @@ pref("services.aitc.client.log.level", "Debug");
 
 pref("services.aitc.dashboard.url", "https://myapps.mozillalabs.com");
 
-pref("services.aitc.manager.putFreq", 5000);
-pref("services.aitc.manager.getFreq", 30000);
+pref("services.aitc.main.idleTime", 120000); // 2 minutes
+
+pref("services.aitc.manager.putFreq", 10000); // 10 seconds
+pref("services.aitc.manager.getActiveFreq", 120000); // 2 minutes
+pref("services.aitc.manager.getPassiveFreq", 7200000); // 2 hours
 pref("services.aitc.manager.log.level", "Debug");
 
 pref("services.aitc.marketplace.url", "https://marketplace.mozilla.org");

@@ -8,14 +8,6 @@ Components.utils.import("resource://services-aitc/browserid.js", tmp);
 const BrowserID = tmp.BrowserID;
 const testPath = "http://mochi.test:8888/browser/services/aitc/tests/";
 
-const google = "http://www.google.com/";
-const dashboard = "https://myapps.mozillalabs.com/";
-const marketplace = "https://marketplace.mozilla.org";
-
-const testEmail = "moztest@mailinator.com";
-const testPassword = "moztestpassword";
-const signInPage = "https://browserid.org/signin";
-
 function loadURL(aURL, aCB) {
   gBrowser.selectedBrowser.addEventListener("load", function () {
     gBrowser.selectedBrowser.removeEventListener("load", arguments.callee, true);
@@ -28,25 +20,4 @@ function loadURL(aURL, aCB) {
 function setEndpoint(name) {
   let fullPath = testPath + "file_" + name + ".html";
   Services.prefs.setCharPref("services.aitc.browserid.url", fullPath);
-}
-
-function parseAssertion(assertion) {
-  let chain = assertion.split("~");
-  let len = chain.length;
-  if (len < 2) {
-    return {};
-  }
-
-  let cert = JSON.parse(atob(
-    chain[0].split(".")[1].replace("-", "+", "g").replace("_", "/", "g")
-  ));
-  let assert = JSON.parse(atob(
-    chain[len-1].split(".")[1].replace("-", "+", "g").replace("_", "/", "g")
-  ));
-
-  return {
-    issuer: cert.iss,
-    email: cert.principal.email,
-    audience: assert.aud
-  };
 }

@@ -13,9 +13,9 @@ Cu.import("resource://gre/modules/Webapps.jsm");
 Cu.import("resource://gre/modules/FileUtils.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
-Cu.import("resource://services-common/rest.js");
 Cu.import("resource://services-common/log4moz.js");
 Cu.import("resource://services-common/preferences.js");
+Cu.import("resource://services-common/rest.js");
 
 /**
  * Provides a file-backed queue. Currently used by manager.js as persistent
@@ -32,6 +32,10 @@ Cu.import("resource://services-common/preferences.js");
  *
  */
 function AitcQueue(filename, cb) {
+  if (!cb) {
+    throw new Error("AitcQueue constructor called without callback");
+  }
+
   this._log = Log4Moz.repository.getLogger("Service.AITC.Storage.Queue");
   this._log.level = Log4Moz.Level[Preferences.get(
     "services.aitc.storage.log.level"
@@ -59,7 +63,7 @@ function AitcQueue(filename, cb) {
 }
 AitcQueue.prototype = {
   /**
-   * Add an object to the queue.
+   * Add an object to the queue, and data is saved to disk.
    */
   enqueue: function enqueue(obj, cb) {
     this._log.info("Adding to queue " + obj);
@@ -73,14 +77,15 @@ AitcQueue.prototype = {
 
     try {
       this._putFile(this._queue, function _enqueuePutFile(err) {
-        if (!err) {
-          // Successful write.
-          cb(null, true);
+        if (err) {
+          // Write unsuccessful, don't add to queue.
+          self._queue.pop();
+          cb(err, false);
           return;
         }
-        // Write unsuccessful, don't add to queue.
-        self._queue.pop();
-        cb(new Error(err), false);
+        // Successful write.
+        cb(null, true);
+        return;        
       });
     } catch (e) {
       self._queue.pop();
@@ -89,7 +94,7 @@ AitcQueue.prototype = {
   },
 
   /**
-   * Remove the object at the head of the queue.
+   * Remove the object at the head of the queue, and data is saved to disk.
    */
   dequeue: function dequeue(cb) {
     this._log.info("Removing head of queue");
@@ -125,17 +130,17 @@ AitcQueue.prototype = {
    * Return the object at the front of the queue without removing it.
    */
   peek: function peek() {
+    this._log.info("Peek called when length " + this._queue.length);
     if (!this._queue.length) {
       throw new Error("Queue is empty");
     }
-    this._log.info("Peek returning head of queue");
     return this._queue[0];
   },
 
   /**
    * Find out the length of the queue.
    */
-  length: function length(cb) {
+  get length() {
     return this._queue.length;
   },
 
@@ -196,7 +201,7 @@ AitcQueue.prototype = {
           self._log.info("asyncCopy succeeded");
           cb(null);
         } else {
-          let msg = "asyncCopy failed with " + result;
+          let msg = new Error("asyncCopy failed with " + result);
           self._log.info(msg);
           cb(msg);
         }
@@ -246,11 +251,37 @@ AitcStorageImpl.prototype = {
   /**
    * Take a list of remote and local apps and figured out what changes (if any)
    * are to be made to the local DOMApplicationRegistry.
+   *
+   * General algorithm:
+   *  1. Put all remote apps in a dictionary of origin->app.
+   *  2. Put all local apps in a dictionary of origin->app.
+   *  3. Mark all local apps as "to be deleted".
+   *  4. Go through each remote app:
+   *    4a. If remote app is not marked as deleted, remove from the "to be
+   *        deleted" set.
+   *    4b. If remote app is marked as deleted, but isn't present locally,
+   *        process the next remote app.
+   *    4c. If remote app is not marked as deleted and isn't present locally,
+   *        add to the "to be installed" set.
+   *  5. For each app either in the "to be installed" or "to be deleted" set,
+   *     apply the changes locally. For apps to be installed, we must also
+   *     fetch the manifest.
+   *
    */
   _processApps: function _processApps(remoteApps, lApps, callback) {
     let toDelete = {};
     let localApps = {};
-    
+
+    // If remoteApps is empty, do nothing. The correct thing to do is to
+    // delete all local apps, but we'll play it safe for now since we are
+    // marking apps as deleted anyway. In a subsequent version (when the
+    // deleted flag is no longer in use), this check can be removed.
+    if (!Object.keys(remoteApps).length) {
+      this._log.warn("Empty set of remote apps to _processApps, returning");
+      callback();
+      return;
+    }
+
     // Convert lApps to a dictionary of origin -> app (instead of id -> app).
     for (let [id, app] in Iterator(lApps)) {
       app.id = id;
@@ -267,9 +298,14 @@ AitcStorageImpl.prototype = {
         delete toDelete[origin];
       }
 
-      // If there is a remote app that isn't local or 
-      // if the remote app was installed later.
-      let id = null;
+      // A remote app that was deleted, but also isn't present locally is NOP.
+      if (app.deleted && !localApps[origin]) {
+        continue;
+      }
+
+      // If there is a remote app that isn't local or if the remote app was
+      // installed or updated later.
+      let id;
       if (!localApps[origin]) {
         id = DOMApplicationRegistry.makeAppId();
       }
@@ -290,76 +326,92 @@ AitcStorageImpl.prototype = {
       toUninstall.push({id: toDelete[origin].id, deleted: true});
     }
 
-    // Apply installs & uninstalls.
-    this._applyUpdates(toInstall, toUninstall, callback);
+    // Apply uninstalls first, we do not need to fetch manifests.
+    if (toUninstall.length) {
+      this._log.info("Applying uninstalls to registry");
+
+      let self = this;
+      DOMApplicationRegistry.updateApps(toUninstall, function() {
+        // If there are installs, proceed to apply each on in parallel. 
+        if (toInstall.length) {
+          self._applyInstalls(toInstall, callback);
+          return;
+        }
+        callback();
+      });
+
+      return;
+    }
+
+    // If there were no uninstalls, only apply installs
+    if (toInstall.length) {
+      this._applyInstalls(toInstall, callback);
+      return;
+    }
+
+    this._log.info("There were no changes to be applied, returning");
+    callback();
     return;
   },
 
   /**
-   * Applies a list of commands as determined by processApps locally.
+   * Apply a set of installs to the local registry. Fetch each app's manifest
+   * in parallel (don't retry on failure) and insert into registry.
    */
-  _applyUpdates: function _applyUpdates(toInstall, toUninstall, callback) {
-    let finalCommands = [];
+  _applyInstalls: function _applyInstalls(toInstall, callback) {
+    let done = 0;
+    let total = toInstall.length;
+    this._log.info("Applying " + total + " installs to registry");
 
+    /**
+     * The purpose of _checkIfDone is to invoke the callback after all the
+     * installs have been applied. They all fire in parallel, and each will
+     * check-in when it is done.
+     */
     let self = this;
-    function onManifestsUpdated() {
-      if (toUninstall.length) {
-        finalCommands = finalCommands.concat(toUninstall);
-      }
-      if (finalCommands.length) {
-        self._log.info(
-          "processUpdates finished fetching manifests, calling updateApps"
-        );
-        DOMApplicationRegistry.updateApps(finalCommands, callback);
-      } else {
-        self._log.info(
-          "processUpdates finished fetching, no finalCommands were found"
-        );
+    function _checkIfDone() {
+      done += 1;
+      self._log.debug(done + "/" + total + " apps processed");
+      if (done == total) {
         callback();
       }
     }
 
-    // If no new manifests to fetch, proceed with update.
-    let done = 0;
-    let total = toInstall.length;
-    if (!total) {
-      onManifestsUpdated();
-      return;
+    function _makeManifestCallback(appObj) {
+      return function(err, manifest) {
+        if (err) {
+          self._log.warn("Could not fetch manifest for " + appObj.name);
+          _checkIfDone();
+          return;
+        }
+        appObj.value.manifest = manifest;
+        DOMApplicationRegistry.updateApps([appObj], _checkIfDone);
+      }
     }
 
-    // Update manifests for all the new remote apps we have.
-    for (let j = 0; j < total; j++) {
-      let app = toInstall[j];
+    /**
+     * Now we get a manifest for each record, and add it to the local registry
+     * when we receive it. If a manifest GET times out, we will not add
+     * the app to the registry but count as "success" anyway. The app will
+     * be added on the next GET poll, hopefully the manifest will be
+     * available then.
+     */
+    for each (let app in toInstall) {
       let url = app.value.manifestURL;
       if (url[0] == "/") {
         url = app.value.origin + app.value.manifestURL;
       }
-
-      this._log.info("Updating manifest " + url + "\n");
-      this._getManifest(url, function(err, manifest) {
-        if (!err) {
-          app.value.manifest = manifest;
-          finalCommands.push(app);
-          self._log.info(app.id + " was added to finalCommands");
-        } else {
-          self._log.debug("Couldn't fetch manifest at " + url + ": " + err);
-        }
-
-        // Not a big deal if we couldn't get a manifest, we will try to fetch
-        // it again in the next cycle. Carry on.
-        done += 1;
-        if (done == total) {
-          onManifestsUpdated();
-        }
-      });
+      this._getManifest(url, _makeManifestCallback(app));
     }
   },
 
   /**
-   * Fetch a manifest from given URL. No retries are made on failure.
+   * Fetch a manifest from given URL. No retries are made on failure. We'll
+   * timeout after 20 seconds.
    */
-  _getManifest: function _getManifest(url, callback)  {
+  _getManifest: function _getManifest(url, callback) {
     let req = new RESTRequest(url);
+    req.timeout = 20;
 
     let self = this;
     req.get(function(error) {

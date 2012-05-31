@@ -54,16 +54,26 @@ function AitcManager(cb) {
   });
 }
 AitcManager.prototype = {
-  get MARKETPLACE() {
-    return PREFS.get("marketplace.url");
-  },
+  /**
+   * State of the user. ACTIVE implies user is looking at the dashboard,
+   * PASSIVE means either not at the dashboard or the idle timer started.
+   */
+  _ACTIVE: 1,
+  _PASSIVE: 2,
 
-  get DASHBOARD() {
-    return PREFS.get("dashboard.url");
+  /**
+   * Smart setter that will only call _setPoll is the value changes.
+   */
+  __state: null,
+  get _state() {
+    return this.__state;
   },
-
-  get TOKEN_SERVER() {
-    return PREFS.get("tokenServer.url");
+  set _state(value) {
+    if (this.__state == value) {
+      return;
+    }
+    this.__state = value;
+    this._setPoll();
   },
 
   /**
@@ -98,12 +108,12 @@ AitcManager.prototype = {
   },
 
   /**
-   * User is looking at dashboard. Start polling, but if user isn't logged in,
-   * prompt for them to login via a dialog.
+   * User is looking at dashboard. Start polling actively, but if user isn't
+   * logged in, prompt for them to login via a dialog.
    */
-  userOnDashboard: function userOnDashboard(win) {
+  userActive: function userActive(win) {
     if (this._client) {
-      this._startPoll();
+      this._state = this._ACTIVE;
       return;
     }
 
@@ -119,70 +129,71 @@ AitcManager.prototype = {
         return;
       }
       self._client = client;
-      self._startPoll();
+      self._state = self._ACTIVE;
     }, true, win);
   },
 
   /**
-   * User is not on the dashboard, we may stop polling (though PUTs will
-   * still continue to be tried).
+   * User is idle, (either by idle observer, or by not being on the dashboard).
+   * When the user is no longer idle and the dashboard is the current active
+   * page, a call to userActive MUST be made.
    */
-  userOffDashboard: function userOffDashboard() {
-    if (this._client) {
-      this._stopPoll();
-      return;
-    }
+  userIdle: function userIdle() {
+    this._state = this._PASSIVE;
   },
 
   /**
-   * Poll the AITC server for any changes and process them. Call this whenever
-   * the user is actively looking at the apps dashboard. It is safe to call
-   * this function multiple times.
+   * Poll the AITC server for any changes and process them. It is safe to call
+   * this function multiple times. Last caller wins. The function will
+   * grab the current user state from _state and act accordingly.
+   *
+   * Invalid states will cause this function to throw.
    */
-  _startPoll: function _startPoll() {
-    if (!this._client) {
-      throw new Error("_startPoll called without client");
+  _setPoll: function _setPoll() {
+    if (this._state == this._ACTIVE && !this._client) {
+      throw new Error("_setPoll(ACTIVE) called without client");
     }
-    if (this._getTimer) {
+    if (this._state != this._ACTIVE && this._state != this._PASSIVE) {
+      throw new Error("_state is invalid " + this._state);
+    }
+
+    if (!this._client) {
+      // User is not logged in, we cannot do anything.
+      self._log.warn("_setPoll called but user not logged in, ignoring");
       return;
     }
 
     // Check if there are any PUTs pending first.
-    if (this._pending.length() && !(this._putTimer)) {
-      // There are pending PUTs and no timer, so let's process them.
+    if (this._pending.length && !(this._putTimer)) {
+      // There are pending PUTs and no timer, so let's process them. GETs will
+      // resume after the PUTs finish (see processQueue)
       this._processQueue();
-    } else {
-      // Do one GET soon.
-      CommonUtils.nextTick(this._checkServer, this);
-    }
-
-    // Start the timer for GETs. In case there were pending PUTs, _checkServer
-    // will automatically abort, and we'll retry after getFreq.
-    let self = this;
-    let getFreq = PREFS.get("manager.getFreq");
-    this._log.info("Starting GET timer");
-    this._getTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
-    this._getTimer.initWithCallback(
-      {
-        notify: function _getTimerNotify() {
-          self._checkServer();
-        },
-      }, getFreq, Ci.nsITimer.TYPE_REPEATING_SLACK
-    );
-    this._log.info("GET timer set, next attempt in " + getFreq + "ms");
-  },
-
-  /**
-   * Stop polling for changes. Call this as soon as the user
-   * isn't looking at the apps dashboard anymore. It is safe to call
-   * this function even if runPeriodically() wasn't called before.
-   */
-  _stopPoll: function _stopPoll() {
-    if (!this._getTimer) {
       return;
     }
-    this._getTimer.cancel();
-    this._getTimer = null;
+    
+    // Do one GET soon, but only if user is active.
+    let getFreq;
+    if (this._state == this._ACTIVE) {
+      CommonUtils.nextTick(this._checkServer, this);
+      getFreq = PREFS.get("manager.getActiveFreq");
+    } else {
+      getFreq = PREFS.get("manager.getPassiveFreq");
+    }
+
+    // Cancel existing timer, if any.
+    if (this._getTimer) {
+      this._getTimer.cancel();
+      this._getTimer = null;
+    }
+
+    // Start the timer for GETs.
+    let self = this;
+    this._log.info("Starting GET timer");
+    this._getTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+    this._getTimer.initWithCallback({notify: this._checkServer.bind(this)},
+                                    getFreq, Ci.nsITimer.TYPE_REPEATING_SLACK);
+
+    this._log.info("GET timer set, next attempt in " + getFreq + "ms");
   },
 
   /**
@@ -195,7 +206,7 @@ AitcManager.prototype = {
       throw new Error("_checkServer called without a client");
     }
 
-    if (this._pending.length()) {
+    if (this._pending.length) {
       this._log.warn("_checkServer aborted because of pending PUTs");
       return;
     }
@@ -227,24 +238,20 @@ AitcManager.prototype = {
 
   /**
    * Go through list of apps to PUT and attempt each one. If we fail, try
-   * again in PUT_FREQ.
+   * again in PUT_FREQ. Will throw if called with an empty, _reschedule()
+   * makes sure that we don't.
    */
-  _processQueue: function _processPutQueue() {
+  _processQueue: function _processQueue() {
     if (!this._client) {
       throw new Error("_processQueue called without a client");
     }
-
-    if (!this._pending.length()) {
-      this._log.info("There are no pending items, _processQueue closing");
-      if (this._putTimer) {
-        this._putTimer.clear();
-      }
-      return;
+    if (!this._pending.length) {
+      throw new Error("_processQueue called with an empty queue");
     }
 
     if (this._putInProgress) {
       // The network request sent out as a result to the last call to
-      // _processPutQueue still isn't done. A timer is created they all
+      // _processQueue still isn't done. A timer is created they all
       // finish to make sure this function is called again if neccessary.
       return;
     }
@@ -297,7 +304,9 @@ AitcManager.prototype = {
 
       // We just finished PUTting an object, try the next one immediately,
       // but only if haven't tried it already in the last putFreq (ms).
-      if (!self._pending.length()) {
+      if (!self._pending.length) {
+        // Start GET timer now that we're done with PUTs.
+        self._setPoll();
         return;
       }
 
@@ -343,33 +352,32 @@ AitcManager.prototype = {
    * cb(err, token) will be invoked on success or failure.
    */
   _getToken: function _getToken(assertion, cb) {
-    let url = this.TOKEN_SERVER + "/1.0/aitc/1.0";
+    let url = PREFS.get("tokenServer.url") + "/1.0/aitc/1.0";
     let client = new TokenServerClient();
 
-    let self = this;
     this._log.info("Obtaining token from " + url);
-    client.getTokenFromBrowserIDAssertion(url, assertion, function(err, tok) {
-      if (!err) {
-        self._log.info("Got token from server: " + JSON.stringify(tok));
-        cb(null, tok);
-        return;
-      }
 
-      if (!err.response) {
-        self._log.error(err);
-        cb(err, null);
-        return;
-      }
-      if (!err.response.success) {
-        self._log.error(err);
-        cb(err, null);
-        return;
-      }
+    let self = this;
+    try {
+      client.getTokenFromBrowserIDAssertion(url, assertion, function(err, tok) {
+        self._gotToken(err, tok, cb);
+      });
+    } catch (e) {
+      cb(new Error(e), null);
+    }
+  },
 
-      let msg = "Unknown error in _getToken " + err.message;
-      self._log.error(msg);
-      cb(new Error(msg), null);
-    });
+  // Token recieved from _getToken.
+  _gotToken: function _gotToken(err, tok, cb) {
+    if (!err) {
+      this._log.info("Got token from server: " + JSON.stringify(tok));
+      cb(null, tok);
+      return;
+    }
+
+    let msg = err.name + " in _getToken: " + err.error;
+    this._log.error(msg);
+    cb(msg, null);
   },
 
   /* To start the AitcClient we need a token, for which we need a BrowserID
@@ -400,7 +408,11 @@ AitcManager.prototype = {
           cb(err, null);
           return;
         }
-        cb(null, new AitcClient(token));
+
+        // We only create one client instance, store values in a pref tree
+        cb(null, new AitcClient(
+          token, new Preferences("services.aitc.client.")
+        ));
       });
     }
     function gotSilentAssertion(err, val) {
@@ -429,7 +441,8 @@ AitcManager.prototype = {
     // Check if we can get assertion silently first
     self._log.info("Attempting to obtain assertion silently")
     BrowserID.getAssertion(gotSilentAssertion, {
-      audience: this.DASHBOARD, sameEmailAs: this.MARKETPLACE
+      audience: PREFS.get("dashboard.url"),
+      sameEmailAs: PREFS.get("marketplace.url")
     });
   },
 

@@ -4,10 +4,11 @@
 Cu.import("resource://gre/modules/Webapps.jsm");
 Cu.import("resource://services-aitc/storage.js");
 
+const START_PORT = 8080;
 const SERVER = "http://localhost";
 
-var fakeApp1 = {
-  origin: SERVER + ":8081",
+let fakeApp1 = {
+  origin: SERVER + ":" + START_PORT,
   receipts: [],
   manifestURL: "/manifest.webapp",
   installOrigin: "http://localhost",
@@ -16,7 +17,7 @@ var fakeApp1 = {
 };
 
 // Valid manifest for app1
-var manifest1 = {
+let manifest1 = {
   name: "Appasaurus",
   description: "Best fake app ever",
   launch_path: "/",
@@ -24,8 +25,8 @@ var manifest1 = {
   required_features: ["webgl"]
 };
 
-var fakeApp2 = {
-  origin: SERVER + ":8082",
+let fakeApp2 = {
+  origin: SERVER + ":" + (START_PORT + 1),
   receipts: ["fake.jwt.token"],
   manifestURL: "/manifest.webapp",
   installOrigin: "http://localhost",
@@ -34,49 +35,52 @@ var fakeApp2 = {
 };
 
 // Invalid manifest for app2
-var manifest2_bad = {
+let manifest2_bad = {
   not: "a manifest",
   fullscreen: true
 };
 
 // Valid manifest for app2
-var manifest2_good = {
+let manifest2_good = {
   name: "Supercalifragilisticexpialidocious",
   description: "Did we blow your mind yet?",
   launch_path: "/"
 };
 
+let fakeApp3 = {
+  origin: SERVER + ":" + (START_PORT + 3), // 8082 is for the good manifest2
+  receipts: [],
+  manifestURL: "/manifest.webapp",
+  installOrigin: "http://localhost",
+  installedAt: Date.now(),
+  modifiedAt: Date.now()
+};
+
+let manifest3 = {
+  name: "Taumatawhakatangihangakoauauotamateapokaiwhenuakitanatahu",
+  description: "Find your way around this beautiful hill",
+  launch_path: "/"
+};
+
 function create_servers() {
-  // Serve manifests for test apps
-  let app1 = httpd_setup({"/manifest.webapp": function(req, res) {
-    let manifest = JSON.stringify(manifest1);
-    res.setStatusLine(req.httpVersion, 200, "OK");
-    res.setHeader("Content-Type", "application/x-web-app-manifest+json");
-    res.bodyOutputStream.write(manifest, manifest.length);
-  }}, 8081);
-
-  let app2_bad = httpd_setup({"/manifest.webapp": function(req, res) {
-    let manifest = JSON.stringify(manifest2_bad);
-    res.setStatusLine(req.httpVersion, 200, "OK");
-    res.setHeader("Content-Type", "application/x-web-app-manifest+json");
-    res.bodyOutputStream.write(manifest, manifest.length);
-  }}, 8082);
-
-  let app2_good = httpd_setup({"/manifest.webapp": function(req, res) {
-    let manifest = JSON.stringify(manifest2_good);
-    res.setStatusLine(req.httpVersion, 200, "OK");
-    res.setHeader("Content-Type", "application/x-web-app-manifest+json");
-    res.bodyOutputStream.write(manifest, manifest.length);
-  }}, 8083);
+  // Setup servers to server manifests at each port
+  let manifests = [manifest1, manifest2_bad, manifest2_good, manifest3];
+  for (let i = 0; i < manifests.length; i++) {
+    let response = JSON.stringify(manifests[i]);
+    httpd_setup({"/manifest.webapp": function(req, res) {
+      res.setStatusLine(req.httpVersion, 200, "OK");
+      res.setHeader("Content-Type", "application/x-web-app-manifest+json");
+      res.bodyOutputStream.write(response, response.length);
+    }}, START_PORT + i);
+  }
 }
 
 function run_test() {
+  create_servers();
   run_next_test();
 }
 
-add_test(function test_storage_process() {
-  create_servers();
-
+add_test(function test_storage_install() {
   let apps = [fakeApp1, fakeApp2];
   AitcStorage.processApps(apps, function() {
     // Verify that app1 got added to registry
@@ -87,7 +91,7 @@ add_test(function test_storage_process() {
     do_check_eq(DOMApplicationRegistry._appId(fakeApp2.origin), null);
 
     // Now associate fakeApp2 with a good manifest and process again
-    fakeApp2.origin = SERVER + ":8083";
+    fakeApp2.origin = SERVER + ":8082";
     AitcStorage.processApps([fakeApp1, fakeApp2], function() {
       // Both apps must be installed
       let id1 = DOMApplicationRegistry._appId(fakeApp1.origin);
@@ -99,12 +103,22 @@ add_test(function test_storage_process() {
   });
 });
 
-add_test(function test_storage_delete() {
-  // Set app1 as deleted
+add_test(function test_storage_uninstall() {
+  // Set app1 as deleted.
   fakeApp1.deleted = true;
-  AitcStorage.processApps([fakeApp1, fakeApp2], function() {
-    // It should be missing
+  AitcStorage.processApps([fakeApp2], function() {
+    // It should be missing.
     do_check_eq(DOMApplicationRegistry._appId(fakeApp1.origin), null);
+    run_next_test();
+  });
+});
+
+add_test(function test_storage_uninstall_empty() {
+  // Now remove app2 by virtue of it missing in the remote list.
+  AitcStorage.processApps([fakeApp3], function() {
+    let id3 = DOMApplicationRegistry._appId(fakeApp3.origin);
+    do_check_eq(DOMApplicationRegistry.itemExists(id3), true);
+    do_check_eq(DOMApplicationRegistry._appId(fakeApp2.origin), null);
     run_next_test();
   });
 });

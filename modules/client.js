@@ -100,22 +100,22 @@ AitcClient.prototype = {
 
     let self = this;
     req.get(function(err) {
-      self._processGetApps(err, cb);
+      self._processGetApps(err, cb, req);
     });
   },
 
   /**
    * GET request returned from getApps, process.
    */
-  _processGetApps: function _processGetApps(error, cb) {
-    if (error) {
-      this._log.error("getApps request error " + error);
-      cb(error, null);
-      return;
-    }
-
+  _processGetApps: function _processGetApps(err, cb, req) {
     // Set X-Backoff or Retry-After, if needed.
     this._setBackoff(req);
+    
+    if (err) {
+      this._log.error("getApps request error " + err);
+      cb(err, null);
+      return;
+    }
     
     // Process response.
     if (req.response.status == 304) {
@@ -124,7 +124,7 @@ AitcClient.prototype = {
       return;
     }
     if (req.response.status != 200) {
-      this._error(req);
+      this._log.error(req);
       cb(new Error("Unexpected error with getApps"), null);
       return;
     }
@@ -137,9 +137,9 @@ AitcClient.prototype = {
       apps = tmp.map(this._makeLocalApp, this);
       this._log.info("getApps succeeded and got " + apps.length);
     } catch (e) {
-      let err = new Error("Exception in getApps " + e);
-      this._log.error(err);
-      cb(err, null);
+      let msg = new Error("Exception in getApps " + e);
+      this._log.error(msg);
+      cb(msg, null);
       return;
     }
     
@@ -148,9 +148,9 @@ AitcClient.prototype = {
       cb(null, apps);
       // Don't update lastModified until we know cb succeeded.
       this._appsLastModified = parseInt(req.response.headers["X-Timestamp"]);
-      this._state.put("lastModified", ""  + this._appsLastModified);
+      this._state.set("lastModified", ""  + this._appsLastModified);
     } catch (e) {
-      this._log("Exception in getApps callback " + e);
+      this._log.error("Exception in getApps callback " + e);
     }
   },
 
@@ -192,7 +192,7 @@ AitcClient.prototype = {
       }
     }
 
-    let record = {
+    let record = { 
       origin:         app.origin,
       installOrigin:  app.installOrigin,
       installedAt:    app.installedAt,
@@ -233,14 +233,14 @@ AitcClient.prototype = {
     this._log.info("Trying to _putApp to " + uri);
     req.put(JSON.stringify(app), function(err) {
       self._setBackoff(req);
-      self._processPutApp(err, cb);
+      self._processPutApp(err, cb, req);
     });
   },
 
   /**
    * PUT from _putApp finished, process.
    */
-  _processPutApp: function _processPutApp(error, cb) {
+  _processPutApp: function _processPutApp(error, cb, req) {
     if (error) {
       this._log.error("_putApp request error " + error);
       cb(error, null);
