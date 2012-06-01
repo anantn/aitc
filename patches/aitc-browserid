@@ -1,11 +1,11 @@
 # HG changeset patch
-# Parent 0dbabae09c0e97ef30ea1d9ba72f36756c5d87f7
+# Parent 735b001e6a955ef744a19cbe184aa581dc1f6ba8
 
 diff --git a/services/aitc/modules/browserid.js b/services/aitc/modules/browserid.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/browserid.js
-@@ -0,0 +1,449 @@
+@@ -0,0 +1,458 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -18,6 +18,8 @@ new file mode 100644
 +
 +Cu.import("resource://gre/modules/Services.jsm");
 +Cu.import("resource://gre/modules/XPCOMUtils.jsm");
++
++Cu.import("resource://services-common/utils.js");
 +Cu.import("resource://services-common/log4moz.js");
 +Cu.import("resource://services-common/preferences.js");
 +
@@ -174,7 +176,8 @@ new file mode 100644
 +      try {
 +        cb(new Error(err), null);
 +      } catch(e) {
-+        this._log.warn("Callback threw in _gotEmails " + e);
++        this._log.warn("Callback threw in _gotEmails " +
++                       CommonUtils.exceptionStr(e));
 +      }
 +      return;
 +    }
@@ -242,7 +245,8 @@ new file mode 100644
 +        try {
 +          cb(null, val);
 +        } catch(e) {
-+          self._log.warn("Callback threw in _getAssertionWithLogin " + e);
++          self._log.warn("Callback threw in _getAssertionWithLogin " +
++                         CommonUtils.exceptionStr(e));
 +        }
 +      } else {
 +        let msg = "Could not obtain assertion in _getAssertionWithLogin";
@@ -250,7 +254,8 @@ new file mode 100644
 +        try {
 +          cb(new Error(msg), null);
 +        } catch(e) {
-+          self._log.warn("Callback threw in _getAssertionWithLogin " + e);
++          self._log.warn("Callback threw in _getAssertionWithLogin " +
++                         CommonUtils.exceptionStr(e));
 +        }
 +      }
 +    }
@@ -294,7 +299,8 @@ new file mode 100644
 +        try {
 +          cb(new Error(msg), null);
 +        } catch(e) {
-+          self._log.warn("Callback threw in _getAssertionWithEmail " + e);
++          self._log.warn("Callback threw in _getAssertionWithEmail " +
++                         CommonUtils.exceptionStr(e));
 +        }
 +        return;
 +      }
@@ -304,7 +310,8 @@ new file mode 100644
 +      try {
 +        cb(null, res);
 +      } catch(e) {
-+        self._log.warn("Callback threw in _getAssertionWithEmail " + e);
++        self._log.warn("Callback threw in _getAssertionWithEmail " +
++                       CommonUtils.exceptionStr(e));
 +      }
 +    }
 +
@@ -315,7 +322,8 @@ new file mode 100644
 +      try {
 +        cb(err, null);
 +      } catch(e) {
-+        self._log.warn("Callback threw in _getAssertionWithEmail " + e);
++        self._log.warn("Callback threw in _getAssertionWithEmail " +
++                       CommonUtils.exceptionStr(e));
 +      }
 +    }
 +    sandbox.box.importFunction(onSuccess);
@@ -348,7 +356,8 @@ new file mode 100644
 +        try {
 +          cb(new Error("No email found for _getAssertionWithDomain"), null);
 +        } catch(e) {
-+          self._log.warn("Callback threw in _getAssertionWithDomain " + e);
++          self._log.warn("Callback threw in _getAssertionWithDomain " +
++                         CommonUtils.exceptionStr(e));
 +        }
 +      }
 +    }
@@ -482,18 +491,18 @@ diff --git a/services/aitc/tests/Makefile.in b/services/aitc/tests/Makefile.in
  
  include $(topsrcdir)/config/rules.mk
 +
-+_BROWSER_FILES = \
-+  head.js \
-+  browser_id_simple.js \
-+  file_browser_id_mock.html \
++_browser_files = \
++  mochitest/head.js \
++  mochitest/browser_id_simple.js \
++  mochitest/file_browser_id_mock.html \
 +  $(NULL)
 +
-+libs:: $(_BROWSER_FILES)
++libs:: $(_browser_files)
 +	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/browser/$(relativesrcdir)
-diff --git a/services/aitc/tests/browser_id_simple.js b/services/aitc/tests/browser_id_simple.js
+diff --git a/services/aitc/tests/mochitest/browser_id_simple.js b/services/aitc/tests/mochitest/browser_id_simple.js
 new file mode 100644
 --- /dev/null
-+++ b/services/aitc/tests/browser_id_simple.js
++++ b/services/aitc/tests/mochitest/browser_id_simple.js
 @@ -0,0 +1,44 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -539,10 +548,10 @@ new file mode 100644
 +
 +  finish();
 +}
-diff --git a/services/aitc/tests/file_browser_id_mock.html b/services/aitc/tests/file_browser_id_mock.html
+diff --git a/services/aitc/tests/mochitest/file_browser_id_mock.html b/services/aitc/tests/mochitest/file_browser_id_mock.html
 new file mode 100644
 --- /dev/null
-+++ b/services/aitc/tests/file_browser_id_mock.html
++++ b/services/aitc/tests/mochitest/file_browser_id_mock.html
 @@ -0,0 +1,52 @@
 +<html>
 +<head>
@@ -597,10 +606,10 @@ new file mode 100644
 +</script>
 +</html>
 \ No newline at end of file
-diff --git a/services/aitc/tests/head.js b/services/aitc/tests/head.js
+diff --git a/services/aitc/tests/mochitest/head.js b/services/aitc/tests/mochitest/head.js
 new file mode 100644
 --- /dev/null
-+++ b/services/aitc/tests/head.js
++++ b/services/aitc/tests/mochitest/head.js
 @@ -0,0 +1,23 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */

@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent 9929268c069a190e0102f5aaf249f0bfceafccae
+# Parent bdee435d0450535aefe7175ceb336e34fea63849
 # User Anant Narayanan <anant@kix.in>
 try: -b do -p all -u all -t all
 
@@ -42,137 +42,6 @@ diff --git a/browser/installer/package-manifest.in b/browser/installer/package-m
  @BINPATH@/defaults/pref/channel-prefs.js
  @BINPATH@/defaults/profile/prefs.js
  
-diff --git a/services/aitc/service.js b/services/aitc/Aitc.js
-rename from services/aitc/service.js
-rename to services/aitc/Aitc.js
---- a/services/aitc/service.js
-+++ b/services/aitc/Aitc.js
-@@ -2,43 +2,117 @@
-  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
-  * You can obtain one at http://mozilla.org/MPL/2.0/. */
- 
- "use strict";
- 
- const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
- Cu.import("resource://gre/modules/XPCOMUtils.jsm");
- Cu.import("resource://gre/modules/Services.jsm");
-+Cu.import("resource://gre/modules/PlacesUtils.jsm");
-+Cu.import("resource://services-common/utils.js");
- 
- function AitcService() {
-+  this.aitc = null;
-   this.wrappedJSObject = this;
- }
- AitcService.prototype = {
-   classID: Components.ID("{a3d387ca-fd26-44ca-93be-adb5fda5a78d}"),
- 
-   QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver,
-+                                         Ci.nsINavHistoryObserver,
-                                          Ci.nsISupportsWeakReference]),
- 
-   observe: function observe(subject, topic, data) {
-     switch (topic) {
-       case "app-startup":
-         let os = Cc["@mozilla.org/observer-service;1"]
-                    .getService(Ci.nsIObserverService);
--        os.addObserver(this, "final-ui-startup", true);
-+        // We listen for this event beacause Aitc won't work until there is
-+        // atleast 1 visible top-level XUL window.
-+        os.addObserver(this, "sessionstore-windows-restored", true);
-         break;
--      case "final-ui-startup":
--        // Start AITC service after 2000ms, only if classic sync is off.
-+      case "sessionstore-windows-restored":
-+        // Start AITC service only if classic sync is off.
-         Cu.import("resource://services-common/preferences.js");
-         if (Preferences.get("services.sync.engine.apps", false)) {
-           return;
-         }
- 
--        Cu.import("resource://services-common/utils.js");
--        CommonUtils.namedTimer(function() {
--          // Kick-off later!
--        }, 2000, this, "timer");
-+        Cu.import("resource://services-common/log4moz.js");
-+        let root = Log4Moz.repository.rootLogger;
-+        root.level = Log4Moz.Level["All"];
-+        let dapp = new Log4Moz.DumpAppender();
-+        dapp.level = Log4Moz.Level["All"];
-+        root.addAppender(dapp);
-+
-+        // Start AITC service if apps.enabled is true. If false, we look
-+        // in the browser history to determine if they're an "apps user". If
-+        // an entry wasn't found, we'll watch for navigation to either the
-+        // marketplace or dashboard and switch ourselves on then.
-+
-+        if (Preferences.get("apps.enabled", false)) {
-+          this.start();
-+          return;
-+        }
-+
-+        // Set commonly used URLs.
-+        this.DASHBOARD_URL = CommonUtils.makeURI(
-+          Preferences.get("services.aitc.dashboard.url")
-+        );
-+        this.MARKETPLACE_URL = CommonUtils.makeURI(
-+          Preferences.get("services.aitc.marketplace.url")
-+        );
-+
-+        if (this.hasUsedApps()) {
-+          Preferences.set("apps.enabled", true);
-+          this.start();
-+          return;
-+        }
-+
-+        // Wait and see if the user wants anything apps related.
-+        PlacesUtils.history.addObserver(this, true);
-         break;
-     }
--  }
-+  },
-+
-+  start: function start() {
-+    Cu.import("resource://services-aitc/main.js");
-+    this.aitc = new Aitc();
-+  },
-+
-+  hasUsedApps: function hasUsedApps() {
-+    let gh = PlacesUtils.ghistory2;
-+    if (gh.isVisited(this.DASHBOARD_URL)) {
-+      return true;
-+    }
-+    if (gh.isVisited(this.MARKETPLACE_URL)) {
-+      return true;
-+    }
-+    return false;
-+  },
-+
-+  // nsINavHistoryObserver. We are only interested in onVisit().
-+  onBeforeDeleteURI: function() {},
-+  onBeginUpdateBatch: function() {},
-+  onClearHistory: function() {},
-+  onDeleteURI: function() {},
-+  onDeleteVisits: function() {},
-+  onEndUpdateBatch: function() {},
-+  onPageChanged: function() {},
-+  onPageExpired: function() {},
-+  onTitleChanged: function() {},
-+
-+  onVisit: function onVisit(uri) {
-+    if (!uri.equals(this.MARKETPLACE_URL) && !uri.equals(this.DASHBOARD_URL)) {
-+      return;
-+    }
-+    
-+    PlacesUtils.history.removeObserver(this);
-+    Preferences.set("apps.enabled", true);
-+    this.start();
-+    return;
-+  },
-+
- };
- 
- const components = [AitcService];
- const NSGetFactory = XPCOMUtils.generateNSGetFactory(components);
 diff --git a/services/aitc/AitcComponents.manifest b/services/aitc/AitcComponents.manifest
 --- a/services/aitc/AitcComponents.manifest
 +++ b/services/aitc/AitcComponents.manifest
@@ -377,7 +246,7 @@ diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/manager.js
-@@ -0,0 +1,449 @@
+@@ -0,0 +1,569 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -401,6 +270,9 @@ new file mode 100644
 +Cu.import("resource://services-common/utils.js");
 +
 +const PREFS = new Preferences("services.aitc.");
++const TOKEN_TIMEOUT = 240000; // 4 minutes
++const DASHBOARD_URL = PREFS.get("dashboard.url");
++const MARKETPLACE_URL = PREFS.get("marketplace.url");
 +
 +/**
 + * The constructor for the manager takes a callback, which will be invoked when
@@ -412,6 +284,10 @@ new file mode 100644
 +  this._client = null;
 +  this._getTimer = null;
 +  this._putTimer = null;
++
++  this._lastToken = 0;
++  this._lastEmail = null;
++  this._dashboardWindow = null;
 +
 +  this._log = Log4Moz.repository.getLogger("Service.AITC.Manager");
 +  this._log.level = Log4Moz.Level[Preferences.get("manager.log.level")];
@@ -492,6 +368,9 @@ new file mode 100644
 +   * logged in, prompt for them to login via a dialog.
 +   */
 +  userActive: function userActive(win) {
++    // Stash a reference to the dashboard window in case we need to prompt
++    this._dashboardWindow = win;
++
 +    if (this._client) {
 +      this._state = this._ACTIVE;
 +      return;
@@ -520,6 +399,7 @@ new file mode 100644
 +   */
 +  userIdle: function userIdle() {
 +    this._state = this._PASSIVE;
++    this._dashboardWindow = null;
 +  },
 +
 +  /**
@@ -577,6 +457,32 @@ new file mode 100644
 +  },
 +
 +  /**
++   * Checks if the current token we hold is valid. If not, we obtain a new one
++   * and execute the provided func. If a token could not be obtained, func will
++   * not be called and an error will be logged.
++   */
++  _validateToken: function _validateToken(func) {
++    if (Date.now() - this._lastToken < TOKEN_TIMEOUT) {
++      func();
++      return;
++    }
++
++    let win;
++    if (this._state == this.ACTIVE) {
++      win = this._dashboardWindow;
++    }
++
++    let self = this;
++    this._refreshToken(function(err, done) {
++      if (!done) {
++        this._log.warn("_checkServer could not refresh token, aborting");
++        return;
++      }
++      func();
++    }, win);
++  },
++
++  /**
 +   * Do a GET check on the server to see if we have any new apps. Abort if
 +   * there are pending PUTs. If we GET some apps, send to storage for
 +   * further processing.
@@ -591,9 +497,14 @@ new file mode 100644
 +      return;
 +    }
 +
++    this._validateToken(this._getApps.bind(this));
++  },
++
++  _getApps: function _getApps() {
 +    // Do a GET
-+    let self = this;
 +    this._log.info("Attempting to getApps");
++
++    let self = this;
 +    this._client.getApps(function gotApps(err, apps) {
 +      if (err) {
 +        // Error was logged in client.
@@ -636,11 +547,16 @@ new file mode 100644
 +      return;
 +    }
 +
-+    let self = this;
++    this._validateToken(this._putApps.bind(this));
++  },
++
++  _putApps: function _putApps() {
 +    this._putInProgress = true;
 +    let record = this._pending.peek();
 +
 +    this._log.info("Processing record type " + record.type);
++
++    let self = this;
 +    function _clientCallback(err, done) {
 +      // Send to end of queue if unsuccessful or err.removeFromQueue is false.
 +      if (err && !err.removeFromQueue) {
@@ -728,6 +644,61 @@ new file mode 100644
 +    }
 +  },
 +
++  /* Obtain a (new) token from the Sagrada token server. If win is is specified,
++   * the user will be asked to login via UI, if required. The callback's
++   * signature is cb(err, done). If a token is obtained successfully, done will
++   * be true and err will be null.
++   */
++  _refreshToken: function _refreshToken(cb, win) {
++    if (!this._client) {
++      throw new Error("_refreshToken called without an active client");
++    }
++
++    this._log.info("Token refresh requested");
++
++    let self = this;
++    function refreshedAssertion(err, assertion) {
++      if (!err) {
++        self._getToken(assertion, function(err, token) {
++          if (err) {
++            cb(err, null);
++            return;
++          }
++          self._lastToken = Date.now();
++          self._client.updateToken(token);
++          cb(null, true);
++        });
++        return;
++      }
++
++      // Silent refresh was asked for.
++      if (!win) {
++        cb(err, null);
++        return;
++      }
++      
++      // Prompt user to login.
++      self._makeClient(function(err, client) {
++        if (err) {
++          cb(err, null);
++          return;
++        }
++      
++        // makeClient sets an updated token.
++        self._client = client;
++        cb(null, true);
++      }, win);
++    }
++
++    let options = { audience: DASHBOARD_URL };
++    if (this._lastEmail) {
++      options.requiredEmail = this._lastEmail;
++    } else {
++      options.sameEmailAs = MARKETPLACE_URL;
++    }
++    BrowserID.getAssertion(refreshedAssertion, options);
++  },
++
 +  /* Obtain a token from Sagrada token server, given a BrowserID assertion
 +   * cb(err, token) will be invoked on success or failure.
 +   */
@@ -760,6 +731,26 @@ new file mode 100644
 +    cb(msg, null);
 +  },
 +
++  // Extract the email address from a BrowserID assertion.
++  _extractEmail: function _extractEmail(assertion) {
++    // Please look the other way while I do this. Thanks.
++    let chain = assertion.split("~");
++    let len = chain.length;
++    if (len < 2) {
++      return null;
++    }
++
++    try {
++      // We need CommonUtils.decodeBase64URL.
++      let cert = JSON.parse(atob(
++        chain[0].split(".")[1].replace("-", "+", "g").replace("_", "/", "g")
++      ));
++      return cert.principal.email;
++    } catch (e) {
++      return null;
++    }
++  },
++
 +  /* To start the AitcClient we need a token, for which we need a BrowserID
 +   * assertion. If login is true, makeClient will ask the user to login in
 +   * the context of win. cb is called with (err, client).
@@ -772,22 +763,20 @@ new file mode 100644
 +      throw new Error("makeClient called with login as true but no win");
 +    }
 +
-+    if (this._client) {
-+      let msg = "Client already exists, not creating";
-+      self._log.info(msg);
-+      cb(new Error(msg), null);
-+      return;
-+    }
-+
 +    let self = this;
 +    let ctxWin = win;
 +    function processAssertion(val) {
++      // Store the email we got the token for so we can refresh.
++      self._lastEmail = self._extractEmail(val);
 +      self._log.info("Got assertion from BrowserID, creating token");
 +      self._getToken(val, function(err, token) {
 +        if (err) {
 +          cb(err, null);
 +          return;
 +        }
++
++        // Store when we got the token so we can refresh it as needed.
++        self._lastToken = Date.now();
 +
 +        // We only create one client instance, store values in a pref tree
 +        cb(null, new AitcClient(
@@ -821,16 +810,68 @@ new file mode 100644
 +    // Check if we can get assertion silently first
 +    self._log.info("Attempting to obtain assertion silently")
 +    BrowserID.getAssertion(gotSilentAssertion, {
-+      audience: PREFS.get("dashboard.url"),
-+      sameEmailAs: PREFS.get("marketplace.url")
++      audience: DASHBOARD_URL,
++      sameEmailAs: MARKETPLACE_URL
 +    });
 +  },
 +
 +};
+diff --git a/services/aitc/service.js b/services/aitc/service.js
+deleted file mode 100644
+--- a/services/aitc/service.js
++++ /dev/null
+@@ -1,47 +0,0 @@
+-/* This Source Code Form is subject to the terms of the Mozilla Public
+- * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+- * You can obtain one at http://mozilla.org/MPL/2.0/. */
+-
+-"use strict";
+-
+-const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+-Cu.import("resource://gre/modules/Services.jsm");
+-
+-function AitcService() {
+-  this.wrappedJSObject = this;
+-}
+-AitcService.prototype = {
+-  classID: Components.ID("{a3d387ca-fd26-44ca-93be-adb5fda5a78d}"),
+-
+-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver,
+-                                         Ci.nsISupportsWeakReference]),
+-
+-  observe: function observe(subject, topic, data) {
+-    switch (topic) {
+-      case "app-startup":
+-        let os = Cc["@mozilla.org/observer-service;1"]
+-                   .getService(Ci.nsIObserverService);
+-        os.addObserver(this, "final-ui-startup", true);
+-        break;
+-      case "final-ui-startup":
+-        // Start AITC service after 2000ms, only if classic sync is off.
+-        Cu.import("resource://services-common/preferences.js");
+-        if (Preferences.get("services.sync.engine.apps", false)) {
+-          return;
+-        }
+-        if (!Preferences.get("services.aitc.enabled", true)) {
+-          return;
+-        }
+-        
+-        Cu.import("resource://services-common/utils.js");
+-        CommonUtils.namedTimer(function() {
+-          // Kick-off later!
+-        }, 2000, this, "timer");
+-        break;
+-    }
+-  }
+-};
+-
+-const components = [AitcService];
+-const NSGetFactory = XPCOMUtils.generateNSGetFactory(components);
 diff --git a/services/aitc/services-aitc.js b/services/aitc/services-aitc.js
 --- a/services/aitc/services-aitc.js
 +++ b/services/aitc/services-aitc.js
-@@ -1,7 +1,19 @@
+@@ -1,7 +1,21 @@
  pref("services.aitc.browserid.url", "https://browserid.org/sign_in");
  pref("services.aitc.browserid.log.level", "Debug");
  
@@ -850,6 +891,8 @@ diff --git a/services/aitc/services-aitc.js b/services/aitc/services-aitc.js
  pref("services.aitc.storage.log.level", "Debug");
 +
 +pref("services.aitc.tokenServer.url", "https://stage-token.services.mozilla.com");
++
++pref("dom.mozApps.whitelist", "https://myapps.mozillalabs.com");
 diff --git a/services/aitc/tests/unit/test_load_modules.js b/services/aitc/tests/unit/test_load_modules.js
 --- a/services/aitc/tests/unit/test_load_modules.js
 +++ b/services/aitc/tests/unit/test_load_modules.js

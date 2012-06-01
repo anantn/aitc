@@ -1,5 +1,5 @@
 # HG changeset patch
-# Parent a551e22a0f80d35825a9074d9306e85811d8a8a0
+# Parent c7a22ef3e25917bc28a9e079238743eed164fa76
 # User Anant Narayanan <anant@kix.in>
 aitc-storage
 
@@ -59,8 +59,8 @@ new file mode 100644
 +
 +  let self = this;
 +  if (this._file.exists()) {
-+    this._getFile(function _gotFile(data) {
-+      if (data) {
++    this._getFile(function gotFile(data) {
++      if (data && Array.isArray(data)) {
 +        self._queue = data;
 +      }
 +      self._log.info("AitcQueue instance created");
@@ -464,93 +464,11 @@ new file mode 100644
 diff --git a/services/aitc/services-aitc.js b/services/aitc/services-aitc.js
 --- a/services/aitc/services-aitc.js
 +++ b/services/aitc/services-aitc.js
-@@ -1,1 +1,2 @@
+@@ -1,2 +1,2 @@
  pref("services.aitc.client.log.level", "Debug");
-+pref("services.aitc.storage.log.level", "Debug");
+-pref("services.aitc.client.timeout", 120);
 \ No newline at end of file
-diff --git a/services/aitc/tests/unit/head_global.js b/services/aitc/tests/unit/head_global.js
-deleted file mode 100644
---- a/services/aitc/tests/unit/head_global.js
-+++ /dev/null
-@@ -1,52 +0,0 @@
--/* Any copyright is dedicated to the Public Domain.
-- * http://creativecommons.org/publicdomain/zero/1.0/ */
--
--// This has the side-effect of populating Cc, Ci, Cu, Cr. It's best not to
--// ask questions and just accept it.
--do_load_httpd_js();
--const Cm = Components.manager;
--
--let gSyncProfile = do_get_profile();
--
--Cu.import("resource://gre/modules/XPCOMUtils.jsm");
--
--let XULAppInfo = {
--  vendor: "Mozilla",
--  name: "XPCShell",
--  ID: "xpcshell@tests.mozilla.org",
--  version: "1",
--  appBuildID: "20100621",
--  platformVersion: "",
--  platformBuildID: "20100621",
--  inSafeMode: false,
--  logConsoleErrors: true,
--  OS: "XPCShell",
--  XPCOMABI: "noarch-spidermonkey",
--  QueryInterface: XPCOMUtils.generateQI([Ci.nsIXULAppInfo, Ci.nsIXULRuntime]),
--  invalidateCachesOnRestart: function invalidateCachesOnRestart() { }
--};
--
--let XULAppInfoFactory = {
--  createInstance: function (outer, iid) {
--    if (outer != null)
--      throw Cr.NS_ERROR_NO_AGGREGATION;
--    return XULAppInfo.QueryInterface(iid);
--  }
--};
--
--let registrar = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
--registrar.registerFactory(Components.ID("{fbfae60b-64a4-44ef-a911-08ceb70b9f31}"),
--                          "XULAppInfo", "@mozilla.org/xre/app-info;1",
--                          XULAppInfoFactory);
--
--function addResourceAlias() {
--  Cu.import("resource://gre/modules/Services.jsm");
--  const handler = Services.io.getProtocolHandler("resource")
--                  .QueryInterface(Ci.nsIResProtocolHandler);
--
--  
--  let uri = Services.io.newURI("resource:///modules/services-aitc/",
--                               null, null);
--  handler.setSubstitution("services-aitc", uri);
--}
--addResourceAlias();
-\ No newline at end of file
-diff --git a/services/aitc/tests/unit/head_helpers.js b/services/aitc/tests/unit/head_helpers.js
-new file mode 100644
---- /dev/null
-+++ b/services/aitc/tests/unit/head_helpers.js
-@@ -0,0 +1,20 @@
-+/* Any copyright is dedicated to the Public Domain.
-+ * http://creativecommons.org/publicdomain/zero/1.0/ */
-+ 
-+function httpd_setup (handlers, port) {
-+  let port   = port || 8080;
-+  let server = new nsHttpServer();
-+  for (let path in handlers) {
-+    server.registerPathHandler(path, handlers[path]);
-+  }
-+  try {
-+    server.start(port);
-+  } catch (ex) {
-+    do_print("==========================================");
-+    do_print("Got exception starting HTTP server on port " + port);
-+    do_print("Error: " + CommonUtils.exceptionStr(ex));
-+    do_print("Is there a process already listening on port " + port + "?");
-+    do_print("==========================================");
-+    do_throw(ex);
-+  }
-+}
++pref("services.aitc.storage.log.level", "Debug");pref("services.aitc.client.timeout", 120);
 \ No newline at end of file
 diff --git a/services/aitc/tests/unit/test_load_modules.js b/services/aitc/tests/unit/test_load_modules.js
 --- a/services/aitc/tests/unit/test_load_modules.js
@@ -571,7 +489,7 @@ diff --git a/services/aitc/tests/unit/test_storage_queue.js b/services/aitc/test
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/tests/unit/test_storage_queue.js
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,115 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
 +
@@ -587,19 +505,6 @@ new file mode 100644
 +add_test(function test_queue_create() {
 +  do_check_eq(queue._queue.length, 0);
 +  do_check_eq(queue._writeLock, false);
-+
-+  try {
-+    queue.enqueue("foo");
-+  } catch (e) {
-+    do_check_eq(e.toString(), "Error: enqueue called without callback");
-+  }
-+
-+  try {
-+    queue.dequeue();
-+  } catch (e) {
-+    do_check_eq(e.toString(), "Error: dequeue called without callback");
-+  }
-+
 +  run_next_test();
 +});
 +
@@ -834,16 +739,15 @@ new file mode 100644
 diff --git a/services/aitc/tests/unit/xpcshell.ini b/services/aitc/tests/unit/xpcshell.ini
 --- a/services/aitc/tests/unit/xpcshell.ini
 +++ b/services/aitc/tests/unit/xpcshell.ini
-@@ -1,6 +1,7 @@
+@@ -1,7 +1,7 @@
  [DEFAULT]
--head = head_global.js
-+head = ../../../common/tests/unit/head_global.js head_helpers.js
+-head = ../../../common/tests/unit/head_global.js head_helpers.js
++head = ../../../common/tests/unit/head_global.js ../../../common/tests/unit/head_helpers.js
  tail =
  
--# Ensure we can import everything.
  [test_load_modules.js]
-+[test_storage_queue.js]
-+[test_storage_registry.js]
+ [test_storage_queue.js]
+ [test_storage_registry.js]
 \ No newline at end of file
 diff --git a/services/common/tests/unit/head_global.js b/services/common/tests/unit/head_global.js
 --- a/services/common/tests/unit/head_global.js

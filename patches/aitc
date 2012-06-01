@@ -84,7 +84,7 @@ diff --git a/services/aitc/modules/client.js b/services/aitc/modules/client.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/modules/client.js
-@@ -0,0 +1,352 @@
+@@ -0,0 +1,387 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -104,6 +104,10 @@ new file mode 100644
 +
 +/**
 + * First argument is a token as returned by CommonUtils.TokenServerClient.
++ * This is a convenience, so you don't have to call updateToken immediately
++ * after making a new client (though you must when the token expires and you
++ * intend to reuse the same client instance).
++ *
 + * Second argument is a key-value store object that exposes two methods:
 + *   set(key, value);     Sets the value of a given key
 + *   get(key, default);   Returns the value of key, if it doesn't exist,
@@ -112,8 +116,7 @@ new file mode 100644
 + * services-common/preferences.js is an example of such an object.
 + */
 +function AitcClient(token, state) {
-+  this.uri = token.endpoint.replace(/\/+$/, "");
-+  this.token = {id: token.id, key: token.key};
++  this.updateToken(token);
 +
 +  this._log = Log4Moz.repository.getLogger("Service.AITC.Client");
 +  this._log.level = Log4Moz.Level[
@@ -135,6 +138,17 @@ new file mode 100644
 +    "origin", "name", "receipts", "manifestPath", "installOrigin",
 +    "installedAt", "modifiedAt"
 +  ],
++
++  /**
++   * Updates the token the client must use to authenticate outgoing requests.
++   *
++   * @param token
++   *        (Object) A token as returned by CommonUtils.TokenServerClient.
++   */
++  updateToken: function updateToken(token) {
++    this.uri = token.endpoint.replace(/\/+$/, "");
++    this.token = {id: token.id, key: token.key};
++  },
 +
 +  /**
 +   * Initiates an update of a newly installed app to the AITC server. Call this
@@ -168,13 +182,10 @@ new file mode 100644
 +      throw new Error("remoteUninstall called without callback");
 +    }
 +
-+    // Fetch the name of the app because it's not in the event app object.
-+    DOMApplicationRegistry.getManifestFor(app.origin, function gotManifest(m) {
-+      app.name = m.name;
-+      let record = this._makeRemoteApp(app);
-+      record.deleted = true;
-+      this._putApp(record, cb);
-+    });
++    app.name = "Uninstalled"; // Bug 760262
++    let record = this._makeRemoteApp(app);
++    record.deleted = true;
++    this._putApp(record, cb);
 +  },
 +
 +  /**
@@ -220,6 +231,14 @@ new file mode 100644
 +      return;
 +    }
 +    
++    // Bubble auth failure back up so new token can be acquired.
++    if (req.response.status == 401) {
++      let msg = new Error("getApps failed due to 401 authentication failure");
++      this._log.info(msg);
++      msg.authfailure = true;
++      cb(msg, null);
++      return;
++    }
 +    // Process response.
 +    if (req.response.status == 304) {
 +      this._log.info("getApps returned 304");
@@ -320,7 +339,7 @@ new file mode 100644
 +      // better to keep server load low, even if it means user's apps won't
 +      // reach their other devices during the early days of AITC. We should
 +      // revisit this when we have a better of idea of server load curves.
-+      err = new Error("X-Backoff in effect, aborting PUT");
++      err = new Error("Backoff in effect, aborting PUT");
 +      err.processed = false;
 +      cb(err, null);
 +      return;
@@ -360,6 +379,21 @@ new file mode 100644
 +      case 204:
 +        this._log.info("_putApp succeeded");
 +        cb(null, true);
++        break;
++
++      case 401:
++        // Bubble auth failure back up so new token can be acquired
++        err = new Error("_putApp failed due to 401 authentication failure");
++        this._log.warn(err);
++        err.authfailure = true;
++        cb(err, null);
++        break;
++
++      case 409:
++        // Retry on server conflict
++        err = new Error("_putApp failed due to 409 conflict");
++        this._log.warn(err);
++        cb(err,null);
 +        break;
 +
 +      case 400:
@@ -420,20 +454,21 @@ new file mode 100644
 +    let backoff = 0;
 +
 +    let val;
-+    if (req.response.headers["X-Backoff"]) {
-+      val = req.response.headers["X-Backoff"];
-+      backoff = parseInt(val, 10);
-+      this._log.warn("X-Backoff header was seen: " + val);
-+    }
 +    if (req.response.headers["Retry-After"]) {
 +      val = req.response.headers["Retry-After"];
 +      backoff = parseInt(val, 10);
 +      this._log.warn("Retry-Header header was seen: " + val);
++    } else if (req.response.headers["X-Backoff"]) {
++      val = req.response.headers["X-Backoff"];
++      backoff = parseInt(val, 10);
++      this._log.warn("X-Backoff header was seen: " + val);
 +    }
 +    if (backoff) {
 +      this._backoff = true;
 +      let time = Date.now();
-+      this._state.set("backoff", "" + (time + (backoff * 1000)));
++      // Fuzz backoff time so all client don't retry at the same time
++      backoff = Math.floor((Math.random() * backoff + backoff) * 1000);
++      this._state.set("backoff", "" + (time + backoff));
 +    }
 +  },
 +};
@@ -442,7 +477,7 @@ diff --git a/services/aitc/service.js b/services/aitc/service.js
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/service.js
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,47 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this file,
 + * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -475,7 +510,10 @@ new file mode 100644
 +        if (Preferences.get("services.sync.engine.apps", false)) {
 +          return;
 +        }
-+
++        if (!Preferences.get("services.aitc.enabled", true)) {
++          return;
++        }
++        
 +        Cu.import("resource://services-common/utils.js");
 +        CommonUtils.namedTimer(function() {
 +          // Kick-off later!
@@ -516,64 +554,6 @@ new file mode 100644
 +XPCSHELL_TESTS = unit
 +
 +include $(topsrcdir)/config/rules.mk
-diff --git a/services/aitc/tests/unit/head_global.js b/services/aitc/tests/unit/head_global.js
-new file mode 100644
---- /dev/null
-+++ b/services/aitc/tests/unit/head_global.js
-@@ -0,0 +1,52 @@
-+/* Any copyright is dedicated to the Public Domain.
-+ * http://creativecommons.org/publicdomain/zero/1.0/ */
-+
-+// This has the side-effect of populating Cc, Ci, Cu, Cr. It's best not to
-+// ask questions and just accept it.
-+do_load_httpd_js();
-+const Cm = Components.manager;
-+
-+let gSyncProfile = do_get_profile();
-+
-+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-+
-+let XULAppInfo = {
-+  vendor: "Mozilla",
-+  name: "XPCShell",
-+  ID: "xpcshell@tests.mozilla.org",
-+  version: "1",
-+  appBuildID: "20100621",
-+  platformVersion: "",
-+  platformBuildID: "20100621",
-+  inSafeMode: false,
-+  logConsoleErrors: true,
-+  OS: "XPCShell",
-+  XPCOMABI: "noarch-spidermonkey",
-+  QueryInterface: XPCOMUtils.generateQI([Ci.nsIXULAppInfo, Ci.nsIXULRuntime]),
-+  invalidateCachesOnRestart: function invalidateCachesOnRestart() { }
-+};
-+
-+let XULAppInfoFactory = {
-+  createInstance: function (outer, iid) {
-+    if (outer != null)
-+      throw Cr.NS_ERROR_NO_AGGREGATION;
-+    return XULAppInfo.QueryInterface(iid);
-+  }
-+};
-+
-+let registrar = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
-+registrar.registerFactory(Components.ID("{fbfae60b-64a4-44ef-a911-08ceb70b9f31}"),
-+                          "XULAppInfo", "@mozilla.org/xre/app-info;1",
-+                          XULAppInfoFactory);
-+
-+function addResourceAlias() {
-+  Cu.import("resource://gre/modules/Services.jsm");
-+  const handler = Services.io.getProtocolHandler("resource")
-+                  .QueryInterface(Ci.nsIResProtocolHandler);
-+
-+  
-+  let uri = Services.io.newURI("resource:///modules/services-aitc/",
-+                               null, null);
-+  handler.setSubstitution("services-aitc", uri);
-+}
-+addResourceAlias();
-\ No newline at end of file
 diff --git a/services/aitc/tests/unit/test_load_modules.js b/services/aitc/tests/unit/test_load_modules.js
 new file mode 100644
 --- /dev/null
@@ -592,13 +572,15 @@ diff --git a/services/aitc/tests/unit/xpcshell.ini b/services/aitc/tests/unit/xp
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/tests/unit/xpcshell.ini
-@@ -0,0 +1,6 @@
+@@ -0,0 +1,7 @@
 +[DEFAULT]
-+head = head_global.js
++head = ../../../common/tests/unit/head_global.js head_helpers.js
 +tail =
 +
-+# Ensure we can import everything.
 +[test_load_modules.js]
++[test_storage_queue.js]
++[test_storage_registry.js]
+\ No newline at end of file
 diff --git a/testing/xpcshell/xpcshell.ini b/testing/xpcshell/xpcshell.ini
 --- a/testing/xpcshell/xpcshell.ini
 +++ b/testing/xpcshell/xpcshell.ini
