@@ -32,14 +32,14 @@ diff --git a/services/Makefile.in b/services/Makefile.in
  topsrcdir = @top_srcdir@
  srcdir    = @srcdir@
  VPATH     = @srcdir@
- 
+
  include $(DEPTH)/config/autoconf.mk
- 
+
  ifdef MOZ_SERVICES_SYNC
 -PARALLEL_DIRS += common crypto sync
 +PARALLEL_DIRS += aitc common crypto sync
  endif
- 
+
  include $(topsrcdir)/config/rules.mk
 diff --git a/services/aitc/AitcComponents.manifest b/services/aitc/AitcComponents.manifest
 new file mode 100644
@@ -123,7 +123,7 @@ new file mode 100644
 +  this._log.level = Log4Moz.Level[
 +    Preferences.get("services.aitc.client.log.level")
 +  ];
-+  
++
 +  this._state = state;
 +  this._backoff = !!state.get("backoff", false);
 +
@@ -162,8 +162,8 @@ new file mode 100644
 +    if (!cb) {
 +      throw new Error("remoteInstall called without callback");
 +    }
-+    
-+    // Fetch the name of the app because it's not in the event app object. 
++
++    // Fetch the name of the app because it's not in the event app object.
 +    let self = this;
 +    DOMApplicationRegistry.getManifestFor(app.origin, function gotManifest(m) {
 +      app.name = m.name;
@@ -225,13 +225,13 @@ new file mode 100644
 +  _processGetApps: function _processGetApps(err, cb, req) {
 +    // Set X-Backoff or Retry-After, if needed.
 +    this._setBackoff(req);
-+    
++
 +    if (err) {
 +      this._log.error("getApps request error " + err);
 +      cb(err, null);
 +      return;
 +    }
-+    
++
 +    // Bubble auth failure back up so new token can be acquired.
 +    if (req.response.status == 401) {
 +      let msg = new Error("getApps failed due to 401 authentication failure");
@@ -264,7 +264,7 @@ new file mode 100644
 +      cb(new Error("Exception in getApps " + e), null);
 +      return;
 +    }
-+    
++
 +    // Return success.
 +    try {
 +      cb(null, apps);
@@ -278,7 +278,7 @@ new file mode 100644
 +
 +  /**
 +   * Change a given app record to match what the server expects.
-+   * Change manifestURL to manifestPath, and trim out manifests since we 
++   * Change manifestURL to manifestPath, and trim out manifests since we
 +   * don't store them on the server.
 +   */
 +  _makeRemoteApp: function _makeRemoteApp(app) {
@@ -315,7 +315,7 @@ new file mode 100644
 +      }
 +    }
 +
-+    let record = { 
++    let record = {
 +      origin:         app.origin,
 +      installOrigin:  app.installOrigin,
 +      installedAt:    app.installedAt,
@@ -420,7 +420,7 @@ new file mode 100644
 +   * Utility methods.
 +   */
 +  _error: function _error(req) {
-+    this._log.error("Catch-all error for request: " + 
++    this._log.error("Catch-all error for request: " +
 +      req.uri.asciiSpec + req.response.status + " with: " + req.response.body);
 +  },
 +
@@ -514,7 +514,7 @@ new file mode 100644
 +        if (!Preferences.get("services.aitc.enabled", true)) {
 +          return;
 +        }
-+        
++
 +        Cu.import("resource://services-common/utils.js");
 +        CommonUtils.namedTimer(function() {
 +          // Kick-off later!
@@ -573,19 +573,16 @@ diff --git a/services/aitc/tests/unit/xpcshell.ini b/services/aitc/tests/unit/xp
 new file mode 100644
 --- /dev/null
 +++ b/services/aitc/tests/unit/xpcshell.ini
-@@ -0,0 +1,7 @@
+@@ -0,0 +1,5 @@
 +[DEFAULT]
-+head = ../../../common/tests/unit/head_global.js head_helpers.js
++head = ../../../common/tests/unit/head_global.js
 +tail =
 +
 +[test_load_modules.js]
-+[test_storage_queue.js]
-+[test_storage_registry.js]
-\ No newline at end of file
 diff --git a/testing/xpcshell/xpcshell.ini b/testing/xpcshell/xpcshell.ini
 --- a/testing/xpcshell/xpcshell.ini
 +++ b/testing/xpcshell/xpcshell.ini
-@@ -67,16 +67,17 @@ skip-if = os == "android"
+@@ -67,21 +67,22 @@ skip-if = os == "android"
  [include:extensions/cookie/test/unit/xpcshell.ini]
  [include:storage/test/unit/xpcshell.ini]
  [include:rdf/tests/unit/xpcshell.ini]
@@ -599,7 +596,13 @@ diff --git a/testing/xpcshell/xpcshell.ini b/testing/xpcshell/xpcshell.ini
  [include:services/crypto/tests/unit/xpcshell.ini]
  [include:services/crypto/components/tests/unit/xpcshell.ini]
  [include:services/sync/tests/unit/xpcshell.ini]
- # Bug 676978: tests hang on Android 
+-# Bug 676978: tests hang on Android 
++# Bug 676978: tests hang on Android
  skip-if = os == "android"
  [include:browser/components/dirprovider/tests/unit/xpcshell.ini]
  [include:browser/components/downloads/test/unit/xpcshell.ini]
+ [include:browser/components/feeds/test/unit/xpcshell.ini]
+ [include:browser/components/migration/tests/unit/xpcshell.ini]
+ [include:browser/components/places/tests/unit/xpcshell.ini]
+ [include:browser/components/privatebrowsing/test/unit/xpcshell.ini]
+ [include:browser/components/shell/test/unit/xpcshell.ini]
