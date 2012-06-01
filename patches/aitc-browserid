@@ -1,5 +1,6 @@
 # HG changeset patch
 # Parent 735b001e6a955ef744a19cbe184aa581dc1f6ba8
+# User Anant Narayanan <anant@kix.in>
 
 diff --git a/services/aitc/modules/browserid.js b/services/aitc/modules/browserid.js
 new file mode 100644
