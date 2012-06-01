@@ -1,12 +1,17 @@
 # HG changeset patch
-# Parent 284c2ed12aad23915df651be9b2b0320b48d7bc0
+# Parent 3b7625302888af57b0108e2c1b161a056fad34ba
 # User Gregory Szorc <gps@mozilla.com>
-Bug 744323 - JS implementation of storage service 2.0 server
+Bug 744323 - JS implementation of storage service 2.0 server; r=rnewman
 
 diff --git a/services/common/Makefile.in b/services/common/Makefile.in
 --- a/services/common/Makefile.in
 +++ b/services/common/Makefile.in
-@@ -31,4 +31,21 @@
+@@ -26,9 +26,26 @@
+ module_dir = $(FINAL_TARGET)/modules/services-common
+ 
+ libs::
+ 	$(NSINSTALL) -D $(module_dir)
+ 	$(NSINSTALL) $(source_modules) $(module_dir)
  
  TEST_DIRS += tests
  
@@ -24,8 +29,8 @@ diff --git a/services/common/Makefile.in b/services/common/Makefile.in
 +head_path = $(srcdir)/tests/unit
 +
 +storage-server:
-+ $(PYTHON) $(srcdir)/tests/run_server.py $(topsrcdir) \
-+   $(MOZ_BUILD_ROOT) run_storage_server.js --port $(storage_server_port)
++	$(PYTHON) $(srcdir)/tests/run_server.py $(topsrcdir) \
++	  $(MOZ_BUILD_ROOT) run_storage_server.js --port $(storage_server_port)
 +
  include $(topsrcdir)/config/rules.mk
 diff --git a/services/common/storageserver.js b/services/common/storageserver.js
@@ -1785,7 +1790,10 @@ new file mode 100644
 diff --git a/services/common/tests/unit/head_helpers.js b/services/common/tests/unit/head_helpers.js
 --- a/services/common/tests/unit/head_helpers.js
 +++ b/services/common/tests/unit/head_helpers.js
-@@ -4,6 +4,7 @@
+@@ -1,14 +1,15 @@
+ /* This Source Code Form is subject to the terms of the Mozilla Public
+  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+  * You can obtain one at http://mozilla.org/MPL/2.0/. */
  
  Cu.import("resource://testing-common/httpd.js");
  Cu.import("resource://services-common/log4moz.js");
@@ -1793,7 +1801,17 @@ diff --git a/services/common/tests/unit/head_helpers.js b/services/common/tests/
  
  let btoa = Cu.import("resource://services-common/log4moz.js").btoa;
  let atob = Cu.import("resource://services-common/log4moz.js").atob;
-@@ -90,7 +91,7 @@
+ 
+ function do_check_empty(obj) {
+   do_check_attribute_count(obj, 0);
+ }
+ 
+@@ -85,17 +86,17 @@
+   for (let path in handlers) {
+     server.registerPathHandler(path, handlers[path]);
+   }
+   try {
+     server.start(port);
    } catch (ex) {
      _("==========================================");
      _("Got exception starting HTTP server on port " + port);
@@ -1802,7 +1820,17 @@ diff --git a/services/common/tests/unit/head_helpers.js b/services/common/tests/
      _("Is there a process already listening on port " + port + "?");
      _("==========================================");
      do_throw(ex);
-@@ -118,14 +119,7 @@
+   }
+ 
+   return server;
+ }
+ 
+@@ -113,24 +114,17 @@
+   };
+ }
+ 
+ /*
+  * Read bytes string from an nsIInputStream.  If 'count' is omitted,
   * all available input is read.
   */
  function readBytesFromInputStream(inputStream, count) {
@@ -1818,6 +1846,11 @@ diff --git a/services/common/tests/unit/head_helpers.js b/services/common/tests/
  }
  
  /*
+  * Ensure exceptions from inside callbacks leads to test failures.
+  */
+ function ensureThrows(func) {
+   return function() {
+     try {
 diff --git a/services/common/tests/unit/head_http.js b/services/common/tests/unit/head_http.js
 new file mode 100644
 --- /dev/null
@@ -1855,7 +1888,12 @@ new file mode 100644
 diff --git a/services/common/tests/unit/test_load_modules.js b/services/common/tests/unit/test_load_modules.js
 --- a/services/common/tests/unit/test_load_modules.js
 +++ b/services/common/tests/unit/test_load_modules.js
-@@ -11,9 +11,18 @@
+@@ -6,14 +6,23 @@
+   "log4moz.js",
+   "preferences.js",
+   "rest.js",
+   "stringbundle.js",
+   "tokenserverclient.js",
    "utils.js",
  ];
  
@@ -2398,14 +2436,24 @@ new file mode 100644
 diff --git a/services/common/tests/unit/xpcshell.ini b/services/common/tests/unit/xpcshell.ini
 --- a/services/common/tests/unit/xpcshell.ini
 +++ b/services/common/tests/unit/xpcshell.ini
-@@ -1,5 +1,5 @@
+@@ -1,10 +1,10 @@
  [DEFAULT]
 -head = head_global.js head_helpers.js
 +head = head_global.js head_helpers.js head_http.js
  tail =
  
  # Test load modules first so syntax failures are caught early.
-@@ -21,3 +21,5 @@
+ [test_load_modules.js]
+ 
+ [test_utils_atob.js]
+ [test_utils_encodeBase32.js]
+ [test_utils_encodeBase64URL.js]
+@@ -17,8 +17,10 @@
+ [test_async_chain.js]
+ [test_async_querySpinningly.js]
+ [test_log4moz.js]
+ [test_observers.js]
+ [test_preferences.js]
  [test_restrequest.js]
  [test_tokenauthenticatedrequest.js]
  [test_tokenserverclient.js]
@@ -2414,7 +2462,12 @@ diff --git a/services/common/tests/unit/xpcshell.ini b/services/common/tests/uni
 diff --git a/services/common/utils.js b/services/common/utils.js
 --- a/services/common/utils.js
 +++ b/services/common/utils.js
-@@ -95,6 +95,20 @@
+@@ -102,16 +102,30 @@
+   nextTick: function nextTick(callback, thisObj) {
+     if (thisObj) {
+       callback = callback.bind(thisObj);
+     }
+     Services.tm.currentThread.dispatch(callback, Ci.nsIThread.DISPATCH_NORMAL);
    },
  
    /**
@@ -2435,7 +2488,17 @@ diff --git a/services/common/utils.js b/services/common/utils.js
     * Return a timer that is scheduled to call the callback after waiting the
     * provided time or as soon as possible. The timer will be set as a property
     * of the provided object with the given timer name.
-@@ -383,6 +397,58 @@
+    */
+   namedTimer: function namedTimer(callback, wait, thisObj, name) {
+     if (!thisObj || !name) {
+       throw "You must provide both an object and a property name for the timer!";
+     }
+@@ -390,16 +404,68 @@
+     let fos = FileUtils.openSafeFileOutputStream(file);
+     let is = this._utf8Converter.convertToInputStream(out);
+     NetUtil.asyncCopy(is, fos, function (result) {
+       if (typeof callback == "function") {
+         callback.call(that);
        }
      });
    },
@@ -2494,3 +2557,8 @@ diff --git a/services/common/utils.js b/services/common/utils.js
  };
  
  XPCOMUtils.defineLazyGetter(CommonUtils, "_utf8Converter", function() {
+   let converter = Cc["@mozilla.org/intl/scriptableunicodeconverter"]
+                     .createInstance(Ci.nsIScriptableUnicodeConverter);
+   converter.charset = "UTF-8";
+   return converter;
+ });

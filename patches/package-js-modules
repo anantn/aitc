@@ -1,7 +1,7 @@
 # HG changeset patch
-# Parent 6ad95e65d74d9113351ca826ab07b8ea227c4703
+# Parent 5b118ac9380f1254ec3ee87435c7a99428df4fba
 # User Gregory Szorc <gps@mozilla.com>
-Bug 755339 - Package testing-only JS modules
+Bug 755339 - Package testing-only JS modules; r=ted
 
 diff --git a/testing/testsuite-targets.mk b/testing/testsuite-targets.mk
 --- a/testing/testsuite-targets.mk
