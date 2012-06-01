@@ -1,15 +1,10 @@
 # HG changeset patch
-# Parent 316a4df7f15e712712aa8db3bda5fdf97b4dec0e
+# Parent 90ce2e565567f0f5ef2dd9218e606a49df979c1b
 
-diff --git a/services/aitc/tests/Makefile.in b/services/aitc/tests/Makefile.in
---- a/services/aitc/tests/Makefile.in
-+++ b/services/aitc/tests/Makefile.in
-@@ -10,16 +10,21 @@ relativesrcdir = services/aitc/tests
- 
- include $(DEPTH)/config/autoconf.mk
- 
- MODULE = test_services_aitc
- XPCSHELL_TESTS = unit
+diff -r 90ce2e565567 services/aitc/tests/Makefile.in
+--- a/services/aitc/tests/Makefile.in	Fri Jun 01 10:16:51 2012 -0700
++++ b/services/aitc/tests/Makefile.in	Fri Jun 01 14:49:52 2012 -0700
+@@ -15,8 +15,13 @@
  
  include $(topsrcdir)/config/rules.mk
  
@@ -23,13 +18,9 @@ diff --git a/services/aitc/tests/Makefile.in b/services/aitc/tests/Makefile.in
    browser_id_simple.js \
    file_browser_id_mock.html \
    $(NULL)
- 
- libs:: $(_BROWSER_FILES)
- 	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/browser/$(relativesrcdir)
-diff --git a/services/aitc/tests/browser_id_1_fresh.js b/services/aitc/tests/browser_id_1_fresh.js
-new file mode 100644
---- /dev/null
-+++ b/services/aitc/tests/browser_id_1_fresh.js
+diff -r 90ce2e565567 services/aitc/tests/browser_id_1_fresh.js
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/services/aitc/tests/browser_id_1_fresh.js	Fri Jun 01 14:49:52 2012 -0700
 @@ -0,0 +1,69 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -101,10 +92,9 @@ new file mode 100644
 +  finish();
 +}
 \ No newline at end of file
-diff --git a/services/aitc/tests/browser_id_2_login.js b/services/aitc/tests/browser_id_2_login.js
-new file mode 100644
---- /dev/null
-+++ b/services/aitc/tests/browser_id_2_login.js
+diff -r 90ce2e565567 services/aitc/tests/browser_id_2_login.js
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/services/aitc/tests/browser_id_2_login.js	Fri Jun 01 14:49:52 2012 -0700
 @@ -0,0 +1,52 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -159,10 +149,9 @@ new file mode 100644
 +  finish();
 +}
 \ No newline at end of file
-diff --git a/services/aitc/tests/browser_id_3_default.js b/services/aitc/tests/browser_id_3_default.js
-new file mode 100644
---- /dev/null
-+++ b/services/aitc/tests/browser_id_3_default.js
+diff -r 90ce2e565567 services/aitc/tests/browser_id_3_default.js
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/services/aitc/tests/browser_id_3_default.js	Fri Jun 01 14:49:52 2012 -0700
 @@ -0,0 +1,26 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -191,10 +180,9 @@ new file mode 100644
 +  finish();
 +}
 \ No newline at end of file
-diff --git a/services/aitc/tests/browser_id_4_emailas.js b/services/aitc/tests/browser_id_4_emailas.js
-new file mode 100644
---- /dev/null
-+++ b/services/aitc/tests/browser_id_4_emailas.js
+diff -r 90ce2e565567 services/aitc/tests/browser_id_4_emailas.js
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/services/aitc/tests/browser_id_4_emailas.js	Fri Jun 01 14:49:52 2012 -0700
 @@ -0,0 +1,27 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -224,15 +212,10 @@ new file mode 100644
 +  finish();
 +}
 \ No newline at end of file
-diff --git a/services/aitc/tests/head.js b/services/aitc/tests/head.js
---- a/services/aitc/tests/head.js
-+++ b/services/aitc/tests/head.js
-@@ -3,21 +3,50 @@
- 
- let tmp = {};
- Components.utils.import("resource://gre/modules/Services.jsm");
- Components.utils.import("resource://services-aitc/browserid.js", tmp);
- 
+diff -r 90ce2e565567 services/aitc/tests/head.js
+--- a/services/aitc/tests/head.js	Fri Jun 01 10:16:51 2012 -0700
++++ b/services/aitc/tests/head.js	Fri Jun 01 14:49:52 2012 -0700
+@@ -8,6 +8,14 @@
  const BrowserID = tmp.BrowserID;
  const testPath = "http://mochi.test:8888/browser/services/aitc/tests/";
  
@@ -247,12 +230,7 @@ diff --git a/services/aitc/tests/head.js b/services/aitc/tests/head.js
  function loadURL(aURL, aCB) {
    gBrowser.selectedBrowser.addEventListener("load", function () {
      gBrowser.selectedBrowser.removeEventListener("load", arguments.callee, true);
-     is(gBrowser.currentURI.spec, aURL, "loaded expected URL");
-     aCB();
-   }, true);
-   gBrowser.loadURI(aURL);
- }
- 
+@@ -20,4 +28,25 @@
  function setEndpoint(name) {
    let fullPath = testPath + "file_" + name + ".html";
    Services.prefs.setCharPref("services.aitc.browserid.url", fullPath);
@@ -279,3 +257,89 @@ diff --git a/services/aitc/tests/head.js b/services/aitc/tests/head.js
 +  };
  }
 \ No newline at end of file
+diff -r 90ce2e565567 services/aitc/tests/unit/head_helpers.js
+--- a/services/aitc/tests/unit/head_helpers.js	Fri Jun 01 10:16:51 2012 -0700
++++ b/services/aitc/tests/unit/head_helpers.js	Fri Jun 01 14:49:52 2012 -0700
+@@ -7,7 +7,8 @@
+ 
+ function httpd_setup (handlers, port) {
+   let port   = port || 8080;
+-  let server = new nsHttpServer();
++  // TODO renamed for bug 757860
++  let server = new HttpServer();
+   for (let path in handlers) {
+     server.registerPathHandler(path, handlers[path]);
+   }
+diff -r 90ce2e565567 services/aitc/tests/unit/test_mock_server.js
+--- a/services/aitc/tests/unit/test_mock_server.js	Fri Jun 01 10:16:51 2012 -0700
++++ b/services/aitc/tests/unit/test_mock_server.js	Fri Jun 01 14:49:52 2012 -0700
+@@ -3,9 +3,9 @@
+ 
+ "use strict";
+ 
++Cu.import("resource://gre/modules/Webapps.jsm");
+ Cu.import("resource://services-common/rest.js");
+ Cu.import("resource://services-common/utils.js");
+-Cu.import("resource://testing-common/services-common/aitcserver.js");
+ Cu.import("resource://services-common/preferences.js");
+ Cu.import("resource://services-aitc/client.js");
+ 
+@@ -93,18 +93,18 @@
+   const app = get_mock_app();
+ 
+   let server = get_server_with_user(username);
+-
+   let client = get_client_for_server(username, server);
+ 
+-  _("Installing " + JSON.stringify(app));
++  // TODO client.remoteInstall depends on DOMApplicationRegistry.getManifestFor,
++  // which is not test-friendly :(
++  let record = client._makeRemoteApp(app);
+ 
+-  client.remoteInstall(app, function(error, status) {
++  client._putApp(record, function(error, status) {
+     _("Got response");
+     do_check_eq(error, null);
+ 
+     do_check_true(status);
+ 
+-
+     client.getApps(function(error, apps) {
+       _("Got response");
+       do_check_eq(error, null);
+@@ -135,7 +135,12 @@
+ 
+   let client = get_client_for_server(username, server);
+ 
+-  client.remoteUninstall(app, function(error, status) {
++  // TODO client.remoteUninstall depends on
++  // DOMApplicationRegistry.getManifestFor, which is not test-friendly :(
++  let record = client._makeRemoteApp(app);
++  record.deleted= true;
++
++  client._putApp(record, function(error, status) {
+     _("Got response");
+     do_check_eq(error, null);
+ 
+diff -r 90ce2e565567 services/aitc/tests/unit/xpcshell.ini
+--- a/services/aitc/tests/unit/xpcshell.ini	Fri Jun 01 10:16:51 2012 -0700
++++ b/services/aitc/tests/unit/xpcshell.ini	Fri Jun 01 14:49:52 2012 -0700
+@@ -1,5 +1,5 @@
+ [DEFAULT]
+-head = ../../../common/tests/unit/head_global.js ../../../common/tests/unit/head_helpers.js head_helpers.js
++head = ../../../common/tests/unit/head_global.js ../../../common/tests/unit/head_helpers.js ../../../common/tests/unit/aitcserver.js head_helpers.js
+ tail =
+ 
+ [test_load_modules.js]
+diff -r 90ce2e565567 services/common/tests/unit/aitcserver.js
+--- a/services/common/tests/unit/aitcserver.js	Fri Jun 01 10:16:51 2012 -0700
++++ b/services/common/tests/unit/aitcserver.js	Fri Jun 01 14:49:52 2012 -0700
+@@ -133,7 +133,7 @@
+ function AITCServer10Server() {
+   this._log = Log4Moz.repository.getLogger("Services.Common.AITCServer");
+ 
+-  this.server = new nsHttpServer();
++  this.server = new HttpServer();
+   this.port = null;
+   this.users = {};
+   this.autoCreateUsers = false;
