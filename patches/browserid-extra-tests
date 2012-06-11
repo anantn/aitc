@@ -1,26 +1,26 @@
 # HG changeset patch
-# Parent 90ce2e565567f0f5ef2dd9218e606a49df979c1b
+# Parent d27a78cba56fc7d504960fc9358ffc4e30691760
 
-diff -r 90ce2e565567 services/aitc/tests/Makefile.in
---- a/services/aitc/tests/Makefile.in	Fri Jun 01 10:16:51 2012 -0700
-+++ b/services/aitc/tests/Makefile.in	Fri Jun 01 14:49:52 2012 -0700
+diff -r d27a78cba56f services/aitc/tests/Makefile.in
+--- a/services/aitc/tests/Makefile.in	Mon Jun 11 13:52:34 2012 -0700
++++ b/services/aitc/tests/Makefile.in	Mon Jun 11 13:58:07 2012 -0700
 @@ -15,8 +15,13 @@
  
  include $(topsrcdir)/config/rules.mk
  
 +# Number the test files because order is very important!
- _BROWSER_FILES = \
-   head.js \
+ _browser_files = \
+   mochitest/head.js \
 +  browser_id_1_fresh.js \
 +  browser_id_2_login.js \
 +  browser_id_3_default.js \
 +  browser_id_4_emailas.js \
-   browser_id_simple.js \
-   file_browser_id_mock.html \
+   mochitest/browser_id_simple.js \
+   mochitest/file_browser_id_mock.html \
    $(NULL)
-diff -r 90ce2e565567 services/aitc/tests/browser_id_1_fresh.js
+diff -r d27a78cba56f services/aitc/tests/browser_id_1_fresh.js
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
-+++ b/services/aitc/tests/browser_id_1_fresh.js	Fri Jun 01 14:49:52 2012 -0700
++++ b/services/aitc/tests/browser_id_1_fresh.js	Mon Jun 11 13:58:07 2012 -0700
 @@ -0,0 +1,69 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -33,7 +33,7 @@ diff -r 90ce2e565567 services/aitc/tests/browser_id_1_fresh.js
 + */
 +function test() {
 +  ok(BrowserID, "BrowserID exists");
-+ 
++
 +  try {
 +    BrowserID.getAssertion();
 +  } catch (e) {
@@ -92,9 +92,9 @@ diff -r 90ce2e565567 services/aitc/tests/browser_id_1_fresh.js
 +  finish();
 +}
 \ No newline at end of file
-diff -r 90ce2e565567 services/aitc/tests/browser_id_2_login.js
+diff -r d27a78cba56f services/aitc/tests/browser_id_2_login.js
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
-+++ b/services/aitc/tests/browser_id_2_login.js	Fri Jun 01 14:49:52 2012 -0700
++++ b/services/aitc/tests/browser_id_2_login.js	Mon Jun 11 13:58:07 2012 -0700
 @@ -0,0 +1,52 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -149,9 +149,9 @@ diff -r 90ce2e565567 services/aitc/tests/browser_id_2_login.js
 +  finish();
 +}
 \ No newline at end of file
-diff -r 90ce2e565567 services/aitc/tests/browser_id_3_default.js
+diff -r d27a78cba56f services/aitc/tests/browser_id_3_default.js
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
-+++ b/services/aitc/tests/browser_id_3_default.js	Fri Jun 01 14:49:52 2012 -0700
++++ b/services/aitc/tests/browser_id_3_default.js	Mon Jun 11 13:58:07 2012 -0700
 @@ -0,0 +1,26 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
@@ -180,17 +180,17 @@ diff -r 90ce2e565567 services/aitc/tests/browser_id_3_default.js
 +  finish();
 +}
 \ No newline at end of file
-diff -r 90ce2e565567 services/aitc/tests/browser_id_4_emailas.js
+diff -r d27a78cba56f services/aitc/tests/browser_id_4_emailas.js
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
-+++ b/services/aitc/tests/browser_id_4_emailas.js	Fri Jun 01 14:49:52 2012 -0700
++++ b/services/aitc/tests/browser_id_4_emailas.js	Mon Jun 11 13:58:07 2012 -0700
 @@ -0,0 +1,27 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
 +
 +/**
-+ * We're already logged in to the marketplace, so let's see if we can 
++ * We're already logged in to the marketplace, so let's see if we can
 + * get an assertion for the dashboard with the same email address without
-+ * knowing which email was used to sign in earlier. 
++ * knowing which email was used to sign in earlier.
 + */
 +function test() {
 +  loadURL(dashboard, function() {
@@ -212,9 +212,9 @@ diff -r 90ce2e565567 services/aitc/tests/browser_id_4_emailas.js
 +  finish();
 +}
 \ No newline at end of file
-diff -r 90ce2e565567 services/aitc/tests/head.js
---- a/services/aitc/tests/head.js	Fri Jun 01 10:16:51 2012 -0700
-+++ b/services/aitc/tests/head.js	Fri Jun 01 14:49:52 2012 -0700
+diff -r d27a78cba56f services/aitc/tests/mochitest/head.js
+--- a/services/aitc/tests/mochitest/head.js	Mon Jun 11 13:52:34 2012 -0700
++++ b/services/aitc/tests/mochitest/head.js	Mon Jun 11 13:58:07 2012 -0700
 @@ -8,6 +8,14 @@
  const BrowserID = tmp.BrowserID;
  const testPath = "http://mochi.test:8888/browser/services/aitc/tests/";
@@ -234,6 +234,8 @@ diff -r 90ce2e565567 services/aitc/tests/head.js
  function setEndpoint(name) {
    let fullPath = testPath + "file_" + name + ".html";
    Services.prefs.setCharPref("services.aitc.browserid.url", fullPath);
+-}
+\ No newline at end of file
 +}
 +
 +function parseAssertion(assertion) {
@@ -255,91 +257,5 @@ diff -r 90ce2e565567 services/aitc/tests/head.js
 +    email: cert.principal.email,
 +    audience: assert.aud
 +  };
- }
++ }
 \ No newline at end of file
-diff -r 90ce2e565567 services/aitc/tests/unit/head_helpers.js
---- a/services/aitc/tests/unit/head_helpers.js	Fri Jun 01 10:16:51 2012 -0700
-+++ b/services/aitc/tests/unit/head_helpers.js	Fri Jun 01 14:49:52 2012 -0700
-@@ -7,7 +7,8 @@
- 
- function httpd_setup (handlers, port) {
-   let port   = port || 8080;
--  let server = new nsHttpServer();
-+  // TODO renamed for bug 757860
-+  let server = new HttpServer();
-   for (let path in handlers) {
-     server.registerPathHandler(path, handlers[path]);
-   }
-diff -r 90ce2e565567 services/aitc/tests/unit/test_mock_server.js
---- a/services/aitc/tests/unit/test_mock_server.js	Fri Jun 01 10:16:51 2012 -0700
-+++ b/services/aitc/tests/unit/test_mock_server.js	Fri Jun 01 14:49:52 2012 -0700
-@@ -3,9 +3,9 @@
- 
- "use strict";
- 
-+Cu.import("resource://gre/modules/Webapps.jsm");
- Cu.import("resource://services-common/rest.js");
- Cu.import("resource://services-common/utils.js");
--Cu.import("resource://testing-common/services-common/aitcserver.js");
- Cu.import("resource://services-common/preferences.js");
- Cu.import("resource://services-aitc/client.js");
- 
-@@ -93,18 +93,18 @@
-   const app = get_mock_app();
- 
-   let server = get_server_with_user(username);
--
-   let client = get_client_for_server(username, server);
- 
--  _("Installing " + JSON.stringify(app));
-+  // TODO client.remoteInstall depends on DOMApplicationRegistry.getManifestFor,
-+  // which is not test-friendly :(
-+  let record = client._makeRemoteApp(app);
- 
--  client.remoteInstall(app, function(error, status) {
-+  client._putApp(record, function(error, status) {
-     _("Got response");
-     do_check_eq(error, null);
- 
-     do_check_true(status);
- 
--
-     client.getApps(function(error, apps) {
-       _("Got response");
-       do_check_eq(error, null);
-@@ -135,7 +135,12 @@
- 
-   let client = get_client_for_server(username, server);
- 
--  client.remoteUninstall(app, function(error, status) {
-+  // TODO client.remoteUninstall depends on
-+  // DOMApplicationRegistry.getManifestFor, which is not test-friendly :(
-+  let record = client._makeRemoteApp(app);
-+  record.deleted= true;
-+
-+  client._putApp(record, function(error, status) {
-     _("Got response");
-     do_check_eq(error, null);
- 
-diff -r 90ce2e565567 services/aitc/tests/unit/xpcshell.ini
---- a/services/aitc/tests/unit/xpcshell.ini	Fri Jun 01 10:16:51 2012 -0700
-+++ b/services/aitc/tests/unit/xpcshell.ini	Fri Jun 01 14:49:52 2012 -0700
-@@ -1,5 +1,5 @@
- [DEFAULT]
--head = ../../../common/tests/unit/head_global.js ../../../common/tests/unit/head_helpers.js head_helpers.js
-+head = ../../../common/tests/unit/head_global.js ../../../common/tests/unit/head_helpers.js ../../../common/tests/unit/aitcserver.js head_helpers.js
- tail =
- 
- [test_load_modules.js]
-diff -r 90ce2e565567 services/common/tests/unit/aitcserver.js
---- a/services/common/tests/unit/aitcserver.js	Fri Jun 01 10:16:51 2012 -0700
-+++ b/services/common/tests/unit/aitcserver.js	Fri Jun 01 14:49:52 2012 -0700
-@@ -133,7 +133,7 @@
- function AITCServer10Server() {
-   this._log = Log4Moz.repository.getLogger("Services.Common.AITCServer");
- 
--  this.server = new nsHttpServer();
-+  this.server = new HttpServer();
-   this.port = null;
-   this.users = {};
-   this.autoCreateUsers = false;
