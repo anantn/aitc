@@ -1,25 +1,10 @@
 # HG changeset patch
-# Parent a66eb64c652fca0d15947636acfe600f6597a6ec
+# Parent 25696b79f0cc0a38476ae2511ce9b37d7fed8419
 
-diff -r a66eb64c652f services/aitc/tests/unit/head_helpers.js
---- a/services/aitc/tests/unit/head_helpers.js	Thu May 31 15:44:50 2012 -0700
-+++ b/services/aitc/tests/unit/head_helpers.js	Thu May 31 17:59:35 2012 -0700
-@@ -1,6 +1,10 @@
- /* Any copyright is dedicated to the Public Domain.
-  * http://creativecommons.org/publicdomain/zero/1.0/ */
-- 
-+
-+Cu.import("resource://testing-common/httpd.js");
-+Cu.import("resource://services-common/log4moz.js");
-+Cu.import("resource://services-common/utils.js");
-+
- function httpd_setup (handlers, port) {
-   let port   = port || 8080;
-   let server = new nsHttpServer();
-diff -r a66eb64c652f services/aitc/tests/unit/test_mock_server.js
+diff -r 25696b79f0cc services/aitc/tests/unit/test_aitc_client.js
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
-+++ b/services/aitc/tests/unit/test_mock_server.js	Thu May 31 17:59:35 2012 -0700
-@@ -0,0 +1,162 @@
++++ b/services/aitc/tests/unit/test_aitc_client.js	Mon Jun 11 13:52:33 2012 -0700
+@@ -0,0 +1,165 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
 +
@@ -27,7 +12,6 @@ diff -r a66eb64c652f services/aitc/tests/unit/test_mock_server.js
 +
 +Cu.import("resource://services-common/rest.js");
 +Cu.import("resource://services-common/utils.js");
-+Cu.import("resource://testing-common/services-common/aitcserver.js");
 +Cu.import("resource://services-common/preferences.js");
 +Cu.import("resource://services-aitc/client.js");
 +
@@ -120,7 +104,7 @@ diff -r a66eb64c652f services/aitc/tests/unit/test_mock_server.js
 +
 +  _("Installing " + JSON.stringify(app));
 +
-+  client.remoteInstall(app, function(error, status) {
++  client._putApp(client._makeRemoteApp(app), function(error, status) {
 +    _("Got response");
 +    do_check_eq(error, null);
 +
@@ -157,6 +141,10 @@ diff -r a66eb64c652f services/aitc/tests/unit/test_mock_server.js
 +
 +  let client = get_client_for_server(username, server);
 +
++  // TODO Use remoteUninstall when
++  // var remote_app = client._makeRemoteApp(app);
++  // remote_app.deleted = true;
++
 +  client.remoteUninstall(app, function(error, status) {
 +    _("Got response");
 +    do_check_eq(error, null);
@@ -182,19 +170,16 @@ diff -r a66eb64c652f services/aitc/tests/unit/test_mock_server.js
 +
 +});
 +
-diff -r a66eb64c652f services/aitc/tests/unit/xpcshell.ini
---- a/services/aitc/tests/unit/xpcshell.ini	Thu May 31 15:44:50 2012 -0700
-+++ b/services/aitc/tests/unit/xpcshell.ini	Thu May 31 17:59:35 2012 -0700
+diff -r 25696b79f0cc services/aitc/tests/unit/xpcshell.ini
+--- a/services/aitc/tests/unit/xpcshell.ini	Mon Jun 11 17:48:04 2012 +0200
++++ b/services/aitc/tests/unit/xpcshell.ini	Mon Jun 11 13:52:33 2012 -0700
 @@ -1,7 +1,8 @@
  [DEFAULT]
--head = ../../../common/tests/unit/head_global.js head_helpers.js
-+head = ../../../common/tests/unit/head_global.js ../../../common/tests/unit/head_helpers.js head_helpers.js
+-head = ../../../common/tests/unit/head_global.js ../../../common/tests/unit/head_helpers.js
++head = ../../../common/tests/unit/head_global.js ../../../common/tests/unit/head_helpers.js ../../../common/tests/unit/head_http.js ../../../common/tests/unit/aitcserver.js
  tail =
  
  [test_load_modules.js]
  [test_storage_queue.js]
--[test_storage_registry.js]
-\ No newline at end of file
-+[test_storage_registry.js]
-+[test_mock_server.js]
-\ No newline at end of file
+ [test_storage_registry.js]
++[test_aitc_client.js]
