@@ -1,0 +1,89 @@
+# HG changeset patch
+# Parent ab5dc52e152a95eefa3bccf0bf40ab59a4f65048
+
+diff --git a/services/aitc/Aitc.js b/services/aitc/Aitc.js
+--- a/services/aitc/Aitc.js
++++ b/services/aitc/Aitc.js
+@@ -70,19 +70,28 @@ AitcService.prototype = {
+         // Wait and see if the user wants anything apps related.
+         PlacesUtils.history.addObserver(this, true);
+         break;
+     }
+   },
+ 
+   start: function start() {
+     Cu.import("resource://services-aitc/main.js");
+-    if (!this.aitc) {
+-      this.aitc = new Aitc();
++    if (this.aitc) {
++      return;
+     }
++
++    // Log to stdout if enabled.
++    Cu.import("resource://services-common/log4moz.js");
++    let root = Log4Moz.repository.getLogger("Service.AITC");
++    root.level = Log4Moz.Level[Preferences.get("services.aitc.log.level")];
++    if (Preferences.get("services.aitc.log")) {
++      root.addAppender(new Log4Moz.DumpAppender());
++    }
++    this.aitc = new Aitc();
+   },
+ 
+   hasUsedApps: function hasUsedApps() {
+     // There is no easy way to determine whether a user is "using apps".
+     // The best we can do right now is to see if they have visited either
+     // the Mozilla dashboard or Marketplace. See bug 760898.
+     let gh = PlacesUtils.ghistory2;
+     if (gh.isVisited(this.DASHBOARD_URL)) {
+diff --git a/services/aitc/modules/browserid.js b/services/aitc/modules/browserid.js
+--- a/services/aitc/modules/browserid.js
++++ b/services/aitc/modules/browserid.js
+@@ -17,17 +17,17 @@ Cu.import("resource://services-common/pr
+ 
+ const PREFS = new Preferences("services.aitc.browserid.");
+ 
+ /**
+  * This implementation will be replaced with native crypto and assertion
+  * generation goodness. See bug 753238.
+  */
+ function BrowserIDService() {
+-  this._log = Log4Moz.repository.getLogger("Services.BrowserID");
++  this._log = Log4Moz.repository.getLogger("Service.AITC.BrowserID");
+   this._log.level = Log4Moz.Level[PREFS.get("log")];
+ }
+ BrowserIDService.prototype = {
+   /**
+    * Getter that returns the freshest value for ID_URI.
+    */
+   get ID_URI() {
+     return PREFS.get("url");
+diff --git a/services/aitc/services-aitc.js b/services/aitc/services-aitc.js
+--- a/services/aitc/services-aitc.js
++++ b/services/aitc/services-aitc.js
+@@ -1,8 +1,12 @@
++// Root logger
++pref("services.aitc.log", false);
++pref("services.aitc.log.level", "All");
++
+ pref("services.aitc.browserid.url", "https://browserid.org/sign_in");
+ pref("services.aitc.browserid.log.level", "Debug");
+ 
+ pref("services.aitc.client.log.level", "Debug");
+ pref("services.aitc.client.timeout", 120); // 120 seconds
+ 
+ pref("services.aitc.dashboard.url", "https://myapps.mozillalabs.com");
+ 
+@@ -12,12 +16,12 @@ pref("services.aitc.manager.putFreq", 10
+ pref("services.aitc.manager.getActiveFreq", 120000); // 2 minutes
+ pref("services.aitc.manager.getPassiveFreq", 7200000); // 2 hours
+ pref("services.aitc.manager.log.level", "Debug");
+ 
+ pref("services.aitc.marketplace.url", "https://marketplace.mozilla.org");
+ 
+ pref("services.aitc.service.log.level", "Debug");
+ 
+-// Temporary value. Change to the production server when we get the OK from server ops
++// Temporary value. Change to the production server (bug 760903)
+ pref("services.aitc.tokenServer.url", "https://stage-token.services.mozilla.com");
+ 
+ pref("services.aitc.storage.log.level", "Debug");
