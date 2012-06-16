@@ -1,0 +1,214 @@
+# HG changeset patch
+# Parent 59bb0f76263fd93d66711e9a693703d8925c9fbb
+
+diff --git a/services/aitc/modules/client.js b/services/aitc/modules/client.js
+--- a/services/aitc/modules/client.js
++++ b/services/aitc/modules/client.js
+@@ -176,17 +176,17 @@ AitcClient.prototype = {
+       cb(new Error("Exception in getApps " + e), null);
+       return;
+     }
+ 
+     // Return success.
+     try {
+       cb(null, apps);
+       // Don't update lastModified until we know cb succeeded.
+-      this._appsLastModified = parseInt(req.response.headers["X-Timestamp"], 10);
++      this._appsLastModified = parseInt(req.response.headers["x-timestamp"], 10);
+       this._state.set("lastModified", ""  + this._appsLastModified);
+     } catch (e) {
+       this._log.error("Exception in getApps callback " + e);
+     }
+   },
+ 
+   /**
+    * Change a given app record to match what the server expects.
+diff --git a/services/aitc/modules/main.js b/services/aitc/modules/main.js
+--- a/services/aitc/modules/main.js
++++ b/services/aitc/modules/main.js
+@@ -27,18 +27,19 @@ function Aitc() {
+   this.DASHBOARD_ORIGIN = CommonUtils.makeURI(
+     Preferences.get("services.aitc.dashboard.url")
+   ).prePath;
+ 
+   this._manager = new AitcManager(this._init.bind(this));
+ }
+ Aitc.prototype = {
+   // The goal of the init function is to be ready to activate the AITC
+-  // client whenever the user is looking at the dashboard.
+-  _init: function init() {
++  // client whenever the user is looking at the dashboard. It also calls
++  // the init function on the manager.
++  _init: function _init() {
+     let self = this;
+ 
+     // This is called iff the user is currently looking the dashboard.
+     function dashboardLoaded(browser) {
+       let win = browser.contentWindow;
+       self._log.info("Dashboard was accessed " + win);
+ 
+       // If page is ready to go, fire immediately.
+diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
+--- a/services/aitc/modules/manager.js
++++ b/services/aitc/modules/manager.js
+@@ -50,23 +50,18 @@ function AitcManager(cb) {
+     // Inform the AitC service that we're good to go!
+     self._log.info("AitC manager has finished loading");
+     try {
+       cb(true);
+     } catch (e) {
+       self._log.error(new Error("AitC manager callback threw " + e));
+     }
+ 
+-    // Schedule them, but only if we can get a silent assertion.
+-    self._makeClient(function(err, client) {
+-      if (!err && client) {
+-        self._client = client;
+-        self._processQueue();
+-      }
+-    }, false);
++    // Do intial PUT/GET on the next tick.
++    CommonUtils.nextTick(self._initialSchedule, self);
+   });
+ }
+ AitcManager.prototype = {
+   /**
+    * State of the user. ACTIVE implies user is looking at the dashboard,
+    * PASSIVE means either not at the dashboard or the idle timer started.
+    */
+   _ACTIVE: 1,
+@@ -153,16 +148,69 @@ AitcManager.prototype = {
+    * page, a call to userActive MUST be made.
+    */
+   userIdle: function userIdle() {
+     this._state = this._PASSIVE;
+     this._dashboardWindow = null;
+   },
+ 
+   /**
++   * Initial schedule for the manager. This will be called by the
++   * constructor after the queue has been initialized.
++   *
++   * Try to schedule PUTs but only if we can get a silent assertion, and if
++   * the queue in non-empty, or we've never done a GET (first run).
++   */
++  _initialSchedule: function _initialSchedule() {
++    let self = this;
++
++    function startProcessQueue() {
++      self._makeClient(function(err, client) {
++        if (!err && client) {
++          self._client = client;
++          self._processQueue();
++        }
++      });
++    }
++
++    if (Preferences.get("services.aitc.client.lastModified", "0") != "0") {
++      if (this._pending.length) {
++        startProcessQueue();
++      }
++      return;
++    }
++
++    DOMApplicationRegistry.getAllWithoutManifests(function gotAllApps(apps) {
++      let done = 0;
++      let appids = Object.keys(apps);
++      let total = appids.length;
++      self._log.info("First run, queuing all local apps: " + total + " found");
++
++      function appQueued(err) {
++        if (err) {
++          self._log.error("Error queuing app " + apps[appids[done]].origin);
++        }
++
++        if (done == total) {
++          self._log.info("Finished queuing all initial local apps");
++          startProcessQueue();
++          return;
++        }
++
++        let app = apps[appids[done]];
++        let obj = {type: "install", app: app, retries: 0, lastTime: 0};
++
++        done += 1;
++        self._pending.enqueue(obj, appQueued);
++      }
++      appQueued();
++    });
++  },
++
++  /**
+    * Poll the AITC server for any changes and process them. It is safe to call
+    * this function multiple times. Last caller wins. The function will
+    * grab the current user state from _state and act accordingly.
+    *
+    * Invalid states will cause this function to throw.
+    */
+   _setPoll: function _setPoll() {
+     if (this._state == this._ACTIVE && !this._client) {
+@@ -180,17 +228,17 @@ AitcManager.prototype = {
+ 
+     // Check if there are any PUTs pending first.
+     if (this._pending.length && !(this._putTimer)) {
+       // There are pending PUTs and no timer, so let's process them. GETs will
+       // resume after the PUTs finish (see processQueue)
+       this._processQueue();
+       return;
+     }
+-    
++
+     // Do one GET soon, but only if user is active.
+     let getFreq;
+     if (this._state == this._ACTIVE) {
+       CommonUtils.nextTick(this._checkServer, this);
+       getFreq = PREFS.get("manager.getActiveFreq");
+     } else {
+       getFreq = PREFS.get("manager.getPassiveFreq");
+     }
+@@ -304,17 +352,17 @@ AitcManager.prototype = {
+ 
+     this._validateToken(this._putApps.bind(this));
+   },
+ 
+   _putApps: function _putApps() {
+     this._putInProgress = true;
+     let record = this._pending.peek();
+ 
+-    this._log.info("Processing record type " + record.type);
++    this._log.info("Processing record " + JSON.stringify(record));
+ 
+     let self = this;
+     function _clientCallback(err, done) {
+       // Send to end of queue if unsuccessful or err.removeFromQueue is false.
+       if (err && !err.removeFromQueue) {
+         self._log.info("PUT failed, re-adding to queue");
+ 
+         // Update retries and time
+@@ -426,24 +474,24 @@ AitcManager.prototype = {
+         return;
+       }
+ 
+       // Silent refresh was asked for.
+       if (!win) {
+         cb(err, null);
+         return;
+       }
+-      
++
+       // Prompt user to login.
+       self._makeClient(function(err, client) {
+         if (err) {
+           cb(err, null);
+           return;
+         }
+-      
++
+         // makeClient sets an updated token.
+         self._client = client;
+         cb(null, true);
+       }, win);
+     }
+ 
+     let options = { audience: DASHBOARD_URL };
+     if (this._lastEmail) {

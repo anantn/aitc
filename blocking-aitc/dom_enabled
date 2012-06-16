@@ -14,9 +14,9 @@ diff --git a/dom/apps/src/Webapps.jsm b/dom/apps/src/Webapps.jsm
        });
      } catch(e) { }
 +
-+    if (!Services.prefs.getBoolPref("apps.enabled")) {
-+      Services.prefs.setBoolPref("apps.enabled", true);
-+    }
++    // nsIPrefBranch throws if pref does not exist, faster to simply write
++    // the pref instead of first checking if it is false.
++    Services.prefs.setBoolPref("apps.enabled", true);
    },
  
    observe: function(aSubject, aTopic, aData) {
