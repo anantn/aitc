@@ -1,3 +1,5 @@
 dom_enabled
 apps_enabled
 local_apps
+redirect
+jsonsave

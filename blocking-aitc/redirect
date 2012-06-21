@@ -1,0 +1,55 @@
+# HG changeset patch
+# Parent 03d2e505ba722bc32787486c1cbd0ac58ef6ba0e
+# User Anant Narayanan <anant@kix.in>
+Redirect about:apps to dashboard
+
+diff --git a/services/aitc/Aitc.js b/services/aitc/Aitc.js
+--- a/services/aitc/Aitc.js
++++ b/services/aitc/Aitc.js
+@@ -73,10 +73,31 @@ AitcService.prototype = {
+     if (Preferences.get("services.aitc.log.dump")) {
+       root.addAppender(new Log4Moz.DumpAppender());
+     }
+     this.aitc = new Aitc();
+   },
+ 
+ };
+ 
+-const components = [AitcService];
++function AboutApps() {
++}
++AboutApps.prototype = {
++  classID: Components.ID("{1de7cbe8-60f1-493e-b56b-9d099b3c018e}"),
++
++  QueryInterface: XPCOMUtils.generateQI([Ci.nsISupports,
++                                         Ci.nsIAboutModule]),
++
++  getURIFlags: function(aURI) {
++    return Ci.nsIAboutModule.ALLOW_SCRIPT;
++  },
++
++  newChannel: function(aURI) {
++    let channel = Services.io.newChannel(
++      Preferences.get("services.aitc.dashboard.url"), null, null
++    );
++    channel.originalURI = aURI;
++    return channel;
++  }
++};
++
++const components = [AitcService, AboutApps];
+ const NSGetFactory = XPCOMUtils.generateNSGetFactory(components);
+diff --git a/services/aitc/AitcComponents.manifest b/services/aitc/AitcComponents.manifest
+--- a/services/aitc/AitcComponents.manifest
++++ b/services/aitc/AitcComponents.manifest
+@@ -1,6 +1,10 @@
+ # Aitc.js
+ component {a3d387ca-fd26-44ca-93be-adb5fda5a78d} Aitc.js
+ contract @mozilla.org/services/aitc;1 {a3d387ca-fd26-44ca-93be-adb5fda5a78d}
+ category app-startup AitcService service,@mozilla.org/services/aitc;1
++
++component {1de7cbe8-60f1-493e-b56b-9d099b3c018e} Aitc.js
++contract @mozilla.org/network/protocol/about;1?what=apps {1de7cbe8-60f1-493e-b56b-9d099b3c018e}
++
+ # Register resource aliases
+ resource services-aitc resource:///modules/services-aitc/

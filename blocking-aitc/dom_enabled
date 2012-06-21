@@ -4,24 +4,24 @@
 diff --git a/dom/apps/src/Webapps.jsm b/dom/apps/src/Webapps.jsm
 --- a/dom/apps/src/Webapps.jsm
 +++ b/dom/apps/src/Webapps.jsm
-@@ -55,16 +55,20 @@ let DOMApplicationRegistry = {
+@@ -100,16 +100,20 @@ let DOMApplicationRegistry = {
+     } catch (ex) {
+       Cu.reportError("DOMApplicationRegistry: Could not read from " + aFile.path + " : " + ex);
+       if (aCallback)
+         aCallback(null);
+     }
+   },
  
-     try {
-       let hosts = Services.prefs.getCharPref("dom.mozApps.whitelist");
-       hosts.split(",").forEach(function(aHost) {
-         Services.perms.add(Services.io.newURI(aHost, null, null), "webapps-manage",
-                            Ci.nsIPermissionManager.ALLOW_ACTION);
-       });
-     } catch(e) { }
-+
+   receiveMessage: function(aMessage) {
 +    // nsIPrefBranch throws if pref does not exist, faster to simply write
 +    // the pref instead of first checking if it is false.
 +    Services.prefs.setBoolPref("apps.enabled", true);
-   },
++
+     let msg = aMessage.json;
  
-   observe: function(aSubject, aTopic, aData) {
-     if (aTopic == "xpcom-shutdown") {
-       this.messages.forEach((function(msgName) {
-         ppmm.removeMessageListener(msgName, this);
-       }).bind(this));
-       Services.obs.removeObserver(this, "xpcom-shutdown");
+     switch (aMessage.name) {
+       case "Webapps:Install":
+         // always ask for UI to install
+         Services.obs.notifyObservers(this, "webapps-ask-install", JSON.stringify(msg));
+         break;
+       case "Webapps:GetSelf":

@@ -1,0 +1,160 @@
+# HG changeset patch
+# Parent dc55fe9fdaece61b06766eeac801062af56d2488
+# User Anant Narayanan <anant@kix.in>
+Use CommonUtils.json* for AitcQueue
+
+diff --git a/services/aitc/modules/storage.js b/services/aitc/modules/storage.js
+--- a/services/aitc/modules/storage.js
++++ b/services/aitc/modules/storage.js
+@@ -11,16 +11,17 @@ const {classes: Cc, interfaces: Ci, util
+ Cu.import("resource://gre/modules/NetUtil.jsm");
+ Cu.import("resource://gre/modules/Webapps.jsm");
+ Cu.import("resource://gre/modules/FileUtils.jsm");
+ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+ 
+ Cu.import("resource://services-common/log4moz.js");
+ Cu.import("resource://services-common/preferences.js");
+ Cu.import("resource://services-common/rest.js");
++Cu.import("resource://services-common/utils.js");
+ 
+ /**
+  * Provides a file-backed queue. Currently used by manager.js as persistent
+  * storage to manage pending installs and uninstalls.
+  *
+  * @param filename
+  *        (String)    The file backing this queue will be named as this string.
+  *
+@@ -38,33 +39,27 @@ function AitcQueue(filename, cb) {
+ 
+   this._log = Log4Moz.repository.getLogger("Service.AITC.Storage.Queue");
+   this._log.level = Log4Moz.Level[Preferences.get(
+     "services.aitc.storage.log.level"
+   )];
+ 
+   this._queue = [];
+   this._writeLock = false;
+-  this._file = FileUtils.getFile("ProfD", ["webapps", filename], true);
++  this._filePath = "webapps/" + filename;
+ 
+   this._log.info("AitcQueue instance loading");
+ 
+-  let self = this;
+-  if (this._file.exists()) {
+-    this._getFile(function gotFile(data) {
+-      if (data && Array.isArray(data)) {
+-        self._queue = data;
+-      }
+-      self._log.info("AitcQueue instance created");
+-      cb(true);
+-    });
+-  } else {
+-    self._log.info("AitcQueue instance created");
++  CommonUtils.jsonLoad(this._filePath, this, function jsonLoaded(data) {
++    if (data && Array.isArray(data)) {
++      this._queue = data;
++    }
++    this._log.info("AitcQueue instance created");
+     cb(true);
+-  }
++  });
+ }
+ AitcQueue.prototype = {
+   /**
+    * Add an object to the queue, and data is saved to disk.
+    */
+   enqueue: function enqueue(obj, cb) {
+     this._log.info("Adding to queue " + obj);
+ 
+@@ -140,81 +135,37 @@ AitcQueue.prototype = {
+   /**
+    * Find out the length of the queue.
+    */
+   get length() {
+     return this._queue.length;
+   },
+ 
+   /**
+-   * Get contents of cache file and parse it into an array. Will throw an
+-   * exception if there is an error while reading the file.
+-   */
+-  _getFile: function _getFile(cb) {
+-    let channel = NetUtil.newChannel(this._file);
+-    channel.contentType = "application/json";
+-
+-    let self = this;
+-    NetUtil.asyncFetch(channel, function _asyncFetched(stream, res) {
+-      if (!Components.isSuccessCode(res)) {
+-        self._log.error("Could not read from json file " + this._file.path);
+-        cb(null);
+-        return;
+-      }
+-
+-      let data = [];
+-      try {
+-        data = JSON.parse(
+-          NetUtil.readInputStreamToString(stream, stream.available())
+-        );
+-        stream.close();
+-        cb(data);
+-      } catch (e) {
+-        self._log.error("Could not parse JSON " + e);
+-        cb(null);
+-      }
+-    });
+-  },
+-
+-  /**
+    * Put an array into the cache file. Will throw an exception if there is
+    * an error while trying to write to the file.
+    */
+   _putFile: function _putFile(value, cb) {
+     if (this._writeLock) {
+       throw new Error("_putFile already in progress");
+     }
+ 
+     this._writeLock = true;
+-    try {
+-      let ostream = FileUtils.openSafeFileOutputStream(this._file);
+-
+-      let converter = Cc["@mozilla.org/intl/scriptableunicodeconverter"].
+-                      createInstance(Ci.nsIScriptableUnicodeConverter);
+-      converter.charset = "UTF-8";
+-      let istream = converter.convertToInputStream(JSON.stringify(value));
+-
+-      // Asynchronously copy the data to the file.
+-      let self = this;
+-      this._log.info("Writing queue to disk");
+-      NetUtil.asyncCopy(istream, ostream, function _asyncCopied(result) {
+-        self._writeLock = false;
+-        if (Components.isSuccessCode(result)) {
+-          self._log.info("asyncCopy succeeded");
+-          cb(null);
+-        } else {
+-          let msg = new Error("asyncCopy failed with " + result);
+-          self._log.info(msg);
+-          cb(msg);
+-        }
+-      });
+-    } catch (e) {
++    this._log.info("Writing queue to disk");
++    CommonUtils.jsonSave(this._filePath, this, value, function jsonSaved(err) {
++      if (err) {
++        let msg = new Error("_putFile failed with " + err);
++        this._writeLock = false;
++        cb(msg);
++        return;
++      }
++      self._log.info("_putFile succeeded");
+       this._writeLock = false;
+-      cb(msg);
+-    }
++      cb(null);
++    });
+   },
+ };
+ 
+ /**
+  * An interface to DOMApplicationRegistry, used by manager.js to process
+  * remote changes received and apply them to the local registry.
+  */
+ function AitcStorageImpl() {
