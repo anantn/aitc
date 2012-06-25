@@ -1,10 +1,12 @@
 # HG changeset patch
-# Parent 25696b79f0cc0a38476ae2511ce9b37d7fed8419
+# Parent 6cb0f670716839a09bbe8f925424dc3be1f48dae
+# User Harald Kirschner <hkirschner@mozilla.com>
+Bug 750948 - Implement unit tests for AitC client against mock server
 
-diff -r 25696b79f0cc services/aitc/tests/unit/test_aitc_client.js
+diff -r 6cb0f6707168 services/aitc/tests/unit/test_aitc_client.js
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
-+++ b/services/aitc/tests/unit/test_aitc_client.js	Mon Jun 11 13:52:33 2012 -0700
-@@ -0,0 +1,165 @@
++++ b/services/aitc/tests/unit/test_aitc_client.js	Mon Jun 25 15:04:07 2012 -0700
+@@ -0,0 +1,158 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
 +
@@ -42,7 +44,7 @@ diff -r 25696b79f0cc services/aitc/tests/unit/test_aitc_client.js
 +
 +function get_mock_app(remote) {
 +
-+  var app = {
++  let app = {
 +    name: "Mocking Birds",
 +    origin: "http://example.com",
 +    installOrigin: "http://example.com",
@@ -51,10 +53,9 @@ diff -r 25696b79f0cc services/aitc/tests/unit/test_aitc_client.js
 +    receipts: []
 +  };
 +
-+  app[(remote ? 'manifestPath' : 'manifestURL')] = "/manifest.webapp";
++  app[remote ? 'manifestPath' : 'manifestURL'] = "/manifest.webapp";
 +
 +  return app;
-+
 +}
 +
 +function get_client_for_server(username, server) {
@@ -81,7 +82,7 @@ diff -r 25696b79f0cc services/aitc/tests/unit/test_aitc_client.js
 +
 +  client.getApps(function(error, apps) {
 +    _("Got response");
-+    do_check_eq(error, null);
++    do_check_null(error);
 +
 +    do_check_true(Array.isArray(apps));
 +    do_check_eq(apps.length, 0);
@@ -102,18 +103,16 @@ diff -r 25696b79f0cc services/aitc/tests/unit/test_aitc_client.js
 +
 +  let client = get_client_for_server(username, server);
 +
-+  _("Installing " + JSON.stringify(app));
-+
++  // TODO _putApp instead of, as install requires app in registry
 +  client._putApp(client._makeRemoteApp(app), function(error, status) {
 +    _("Got response");
-+    do_check_eq(error, null);
++    do_check_null(error);
 +
 +    do_check_true(status);
 +
-+
 +    client.getApps(function(error, apps) {
 +      _("Got response");
-+      do_check_eq(error, null);
++      do_check_null(error);
 +
 +      do_check_true(Array.isArray(apps));
 +      do_check_eq(apps.length, 1);
@@ -137,23 +136,19 @@ diff -r 25696b79f0cc services/aitc/tests/unit/test_aitc_client.js
 +  const app = get_mock_app();
 +
 +  let server = get_server_with_user(username);
-+  server.users[username].addApp(get_mock_app(true));
-+
 +  let client = get_client_for_server(username, server);
 +
-+  // TODO Use remoteUninstall when
-+  // var remote_app = client._makeRemoteApp(app);
-+  // remote_app.deleted = true;
++  server.users[username].addApp(get_mock_app(true));
 +
 +  client.remoteUninstall(app, function(error, status) {
 +    _("Got response");
-+    do_check_eq(error, null);
++    do_check_null(error);
 +
 +    do_check_true(status);
 +
 +    client.getApps(function(error, apps) {
 +      _("Got response");
-+      do_check_eq(error, null);
++      do_check_eq(error);
 +
 +      do_check_true(Array.isArray(apps));
 +      do_check_eq(apps.length, 1);
@@ -170,9 +165,9 @@ diff -r 25696b79f0cc services/aitc/tests/unit/test_aitc_client.js
 +
 +});
 +
-diff -r 25696b79f0cc services/aitc/tests/unit/xpcshell.ini
---- a/services/aitc/tests/unit/xpcshell.ini	Mon Jun 11 17:48:04 2012 +0200
-+++ b/services/aitc/tests/unit/xpcshell.ini	Mon Jun 11 13:52:33 2012 -0700
+diff -r 6cb0f6707168 services/aitc/tests/unit/xpcshell.ini
+--- a/services/aitc/tests/unit/xpcshell.ini	Mon Jun 25 13:40:04 2012 -0700
++++ b/services/aitc/tests/unit/xpcshell.ini	Mon Jun 25 15:04:07 2012 -0700
 @@ -1,7 +1,8 @@
  [DEFAULT]
 -head = ../../../common/tests/unit/head_global.js ../../../common/tests/unit/head_helpers.js
