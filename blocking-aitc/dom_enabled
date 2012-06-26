@@ -1,5 +1,6 @@
 # HG changeset patch
-# Parent d8e9c8848a2a2b97048c0061c1c4923d0aa2b686
+# Parent 4af0c62e30a7ead77c1e41bd5043396211a3d7fa
+Bug 760898: Set dom.mozApps.used when the Apps DOM API is used; r=fabrice
 
 diff --git a/dom/apps/src/Webapps.jsm b/dom/apps/src/Webapps.jsm
 --- a/dom/apps/src/Webapps.jsm
@@ -15,7 +16,7 @@ diff --git a/dom/apps/src/Webapps.jsm b/dom/apps/src/Webapps.jsm
    receiveMessage: function(aMessage) {
 +    // nsIPrefBranch throws if pref does not exist, faster to simply write
 +    // the pref instead of first checking if it is false.
-+    Services.prefs.setBoolPref("apps.enabled", true);
++    Services.prefs.setBoolPref("dom.mozApps.used", true);
 +
      let msg = aMessage.json;
  

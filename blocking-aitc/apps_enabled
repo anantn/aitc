@@ -1,10 +1,11 @@
 # HG changeset patch
-# Parent 01ac9116da4f8d7c8151a102811da15298a7fa1e
+# Parent 0388e4acf5c8748e977b6f8a2291960046db8883
+Bug 760898: Only enable AITC if the Apps DOM API is used; r=gps
 
 diff --git a/services/aitc/Aitc.js b/services/aitc/Aitc.js
 --- a/services/aitc/Aitc.js
 +++ b/services/aitc/Aitc.js
-@@ -3,77 +3,64 @@
+@@ -3,128 +3,81 @@
   * You can obtain one at http://mozilla.org/MPL/2.0/. */
  
  "use strict";
@@ -54,14 +55,11 @@ diff --git a/services/aitc/Aitc.js b/services/aitc/Aitc.js
 -        // an entry wasn't found, we'll watch for navigation to either the
 -        // marketplace or dashboard and switch ourselves on then.
 -
-+        // Start AITC service only if apps.enabled is true. If false, setup
-+        // an observer in case the value changes as a result of an access to
-+        // the DOM API.
-         if (Preferences.get("apps.enabled", false)) {
-           this.start();
-           return;
-         }
- 
+-        if (Preferences.get("apps.enabled", false)) {
+-          this.start();
+-          return;
+-        }
+-
 -        // Set commonly used URLs.
 -        this.DASHBOARD_URL = CommonUtils.makeURI(
 -          Preferences.get("services.aitc.dashboard.url")
@@ -72,15 +70,19 @@ diff --git a/services/aitc/Aitc.js b/services/aitc/Aitc.js
 -
 -        if (this.hasUsedApps()) {
 -          Preferences.set("apps.enabled", true);
--          this.start();
--          return;
--        }
--
++        // Start AITC service only if apps.enabled is true. If false, setup
++        // an observer in case the value changes as a result of an access to
++        // the DOM API.
++        if (Preferences.get("dom.mozApps.used", false)) {
+           this.start();
+           return;
+         }
+ 
          // Wait and see if the user wants anything apps related.
 -        PlacesUtils.history.addObserver(this, true);
-+        Preferences.observe("apps.enabled", function checkIfEnabled() {
-+          if (Preferences.get("apps.enabled", false)) {
-+            Preferences.ignore("apps.enabled", checkIfEnabled, this);
++        Preferences.observe("dom.mozApps.used", function checkIfEnabled() {
++          if (Preferences.get("dom.mozApps.used", false)) {
++            Preferences.ignore("dom.mozApps.used", checkIfEnabled, this);
 +            this.start();
 +          }
 +        }, this);
@@ -89,16 +91,21 @@ diff --git a/services/aitc/Aitc.js b/services/aitc/Aitc.js
    },
  
    start: function start() {
-     Cu.import("resource://services-aitc/main.js");
+-    Cu.import("resource://services-aitc/main.js");
      if (this.aitc) {
        return;
-@@ -84,47 +71,12 @@ AitcService.prototype = {
+     }
+ 
+     // Log to stdout if enabled.
++    Cu.import("resource://services-aitc/main.js");
+     Cu.import("resource://services-common/log4moz.js");
      let root = Log4Moz.repository.getLogger("Service.AITC");
      root.level = Log4Moz.Level[Preferences.get("services.aitc.log.level")];
      if (Preferences.get("services.aitc.log.dump")) {
        root.addAppender(new Log4Moz.DumpAppender());
      }
      this.aitc = new Aitc();
++    Services.obs.notifyObservers(null, "service:aitc:started", null);
    },
  
 -  hasUsedApps: function hasUsedApps() {
@@ -140,3 +147,20 @@ diff --git a/services/aitc/Aitc.js b/services/aitc/Aitc.js
  
  const components = [AitcService];
  const NSGetFactory = XPCOMUtils.generateNSGetFactory(components);
+diff --git a/services/aitc/services-aitc.js b/services/aitc/services-aitc.js
+--- a/services/aitc/services-aitc.js
++++ b/services/aitc/services-aitc.js
+@@ -1,10 +1,11 @@
+-// Root logger
+-pref("services.aitc.log.dump", false);
++pref("dom.mozApps.used", false); // Set to true by DOMApplicationRegistry
++
++pref("services.aitc.log.dump", false); // Root logger
+ pref("services.aitc.log.level", "All");
+ 
+ pref("services.aitc.browserid.url", "https://browserid.org/sign_in");
+ pref("services.aitc.browserid.log.level", "Debug");
+ 
+ pref("services.aitc.client.log.level", "Debug");
+ pref("services.aitc.client.timeout", 120); // 120 seconds
+ 
