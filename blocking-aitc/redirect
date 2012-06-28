@@ -1,16 +1,16 @@
 # HG changeset patch
-# Parent 03d2e505ba722bc32787486c1cbd0ac58ef6ba0e
+# Parent 9e5967a09ac10798c878381ff4ad40acbd327f05
 # User Anant Narayanan <anant@kix.in>
 Redirect about:apps to dashboard
 
 diff --git a/services/aitc/Aitc.js b/services/aitc/Aitc.js
 --- a/services/aitc/Aitc.js
 +++ b/services/aitc/Aitc.js
-@@ -73,10 +73,31 @@ AitcService.prototype = {
-     if (Preferences.get("services.aitc.log.dump")) {
+@@ -74,10 +74,31 @@ AitcService.prototype = {
        root.addAppender(new Log4Moz.DumpAppender());
      }
      this.aitc = new Aitc();
+     Services.obs.notifyObservers(null, "service:aitc:started", null);
    },
  
  };
