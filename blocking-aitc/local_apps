@@ -1,6 +1,66 @@
 # HG changeset patch
-# Parent 59bb0f76263fd93d66711e9a693703d8925c9fbb
+# Parent 9e5967a09ac10798c878381ff4ad40acbd327f05
 
+diff --git a/dom/apps/src/Webapps.jsm b/dom/apps/src/Webapps.jsm
+--- a/dom/apps/src/Webapps.jsm
++++ b/dom/apps/src/Webapps.jsm
+@@ -193,17 +193,17 @@ let DOMApplicationRegistry = {
+ 
+     let dir = FileUtils.getDir(DIRECTORY_NAME, ["webapps", id], true, true);
+     let manFile = dir.clone();
+     manFile.append("manifest.webapp");
+     this._writeFile(manFile, JSON.stringify(app.manifest));
+     this.webapps[id] = appObject;
+ 
+     appObject.status = "installed";
+-    
++
+     let manifest = new DOMApplicationManifest(app.manifest, app.origin);
+ 
+     if (!aFromSync)
+       this._saveApps((function() {
+         ppmm.sendAsyncMessage("Webapps:Install:Return:OK", aData);
+         Services.obs.notifyObservers(this, "webapps-sync-install", appNote);
+       }).bind(this));
+ 
+@@ -367,17 +367,17 @@ let DOMApplicationRegistry = {
+   /** Added to support AITC and classic sync */
+   itemExists: function(aId) {
+     return !!this.webapps[aId];
+   },
+ 
+   getAppById: function(aId) {
+     if (!this.webapps[aId])
+       return null;
+-    
++
+     let app = this._cloneAppObject(this.webapps[aId]);
+     return app;
+   },
+ 
+   getAppByManifestURL: function(aManifestURL) {
+     // This could be O(1) if |webapps| was a dictionary indexed on manifestURL
+     // which should be the unique app identifier.
+     // It's currently O(n).
+@@ -385,17 +385,17 @@ let DOMApplicationRegistry = {
+       let app = this.webapps[id];
+       if (app.manifestURL == aManifestURL) {
+         return this._cloneAppObject(app);
+       }
+     }
+ 
+     return null;
+   },
+-  
++
+   getAllWithoutManifests: function(aCallback) {
+     let result = {};
+     for (let id in this.webapps) {
+       let app = this._cloneAppObject(this.webapps[id]);
+       result[id] = app;
+     }
+     aCallback(result);
+   },
 diff --git a/services/aitc/modules/client.js b/services/aitc/modules/client.js
 --- a/services/aitc/modules/client.js
 +++ b/services/aitc/modules/client.js
@@ -166,25 +226,6 @@ diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
      } else {
        getFreq = PREFS.get("manager.getPassiveFreq");
      }
-@@ -304,17 +352,17 @@ AitcManager.prototype = {
- 
-     this._validateToken(this._putApps.bind(this));
-   },
- 
-   _putApps: function _putApps() {
-     this._putInProgress = true;
-     let record = this._pending.peek();
- 
--    this._log.info("Processing record type " + record.type);
-+    this._log.info("Processing record " + JSON.stringify(record));
- 
-     let self = this;
-     function _clientCallback(err, done) {
-       // Send to end of queue if unsuccessful or err.removeFromQueue is false.
-       if (err && !err.removeFromQueue) {
-         self._log.info("PUT failed, re-adding to queue");
- 
-         // Update retries and time
 @@ -426,24 +474,24 @@ AitcManager.prototype = {
          return;
        }
@@ -212,3 +253,131 @@ diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
  
      let options = { audience: DASHBOARD_URL };
      if (this._lastEmail) {
+diff --git a/services/aitc/modules/storage.js b/services/aitc/modules/storage.js
+--- a/services/aitc/modules/storage.js
++++ b/services/aitc/modules/storage.js
+@@ -327,17 +327,17 @@ AitcStorageImpl.prototype = {
+     }
+ 
+     // Apply uninstalls first, we do not need to fetch manifests.
+     if (toUninstall.length) {
+       this._log.info("Applying uninstalls to registry");
+ 
+       let self = this;
+       DOMApplicationRegistry.updateApps(toUninstall, function() {
+-        // If there are installs, proceed to apply each on in parallel. 
++        // If there are installs, proceed to apply each one in parallel.
+         if (toInstall.length) {
+           self._applyInstalls(toInstall, callback);
+           return;
+         }
+         callback();
+       });
+ 
+       return;
+diff --git a/services/aitc/tests/unit/test_manager.js b/services/aitc/tests/unit/test_manager.js
+new file mode 100644
+--- /dev/null
++++ b/services/aitc/tests/unit/test_manager.js
+@@ -0,0 +1,89 @@
++/* Any copyright is dedicated to the Public Domain.
++   http://creativecommons.org/publicdomain/zero/1.0/ */
++
++Cu.import("resource://gre/modules/Webapps.jsm");
++
++Cu.import("resource://services-aitc/manager.js");
++Cu.import("resource://services-common/utils.js");
++Cu.import("resource://services-common/preferences.js");
++
++let fakeApp1 = {
++  origin: "http://1.example.org",
++  receipts: [],
++  manifestURL: "/manifest.webapp",
++  installOrigin: "http://localhost",
++  installedAt: Date.now(),
++  modifiedAt: Date.now(),
++
++  manifest: {
++    name: "Appasaurus 1",
++    description: "One of the best fake apps ever",
++    launch_path: "/",
++    fullscreen: true,
++    required_features: ["webgl"]
++  }
++};
++
++let fakeApp2 = {
++  origin: "http://2.example.org",
++  receipts: [],
++  manifestURL: "/manifest.webapp",
++  installOrigin: "http://localhost",
++  installedAt: Date.now(),
++  modifiedAt: Date.now(),
++
++  manifest: {
++    name: "Appasaurus 2",
++    description: "The other best fake app ever",
++    launch_path: "/",
++    fullscreen: true,
++    required_features: ["geolocation"]
++  }
++};
++
++function run_test() {
++  run_next_test();
++}
++
++add_test(function test_manager_localapps() {
++  // Install two fake apps into the DOM registry.
++  DOMApplicationRegistry.confirmInstall({app: fakeApp1});
++  DOMApplicationRegistry.confirmInstall({app: fakeApp2});
++
++  // Create an instance of the manager and check if it put the app in the queue.
++  let manager = new AitcManager(function() {
++    // Here's where it gets ugly, the manager will add local apps to the queue
++    // asynchronously, so we don't know for sure when to check if the app was
++    // added. We'll wait for arbritrary 100ms (intermittent orange warning!).
++    let checkQueue = {
++      callback: function() {
++        do_check_eq(manager._pending.length, 2);
++        let entry = manager._pending.peek();
++        do_check_eq(entry.type, "install");
++        do_check_eq(entry.app.origin, fakeApp1.origin);
++
++        // Reset the queue, so the next test is clean.
++        manager._pending.dequeue(function() {
++          manager._pending.dequeue(run_next_test);
++        });
++      }
++    };
++    CommonUtils.namedTimer(checkQueue.callback, 100, checkQueue, "timer");
++  });
++});
++
++add_test(function test_manager_alreadysynced() {
++  // The manager should ignore any local apps if we've already synced before.
++  DOMApplicationRegistry.confirmInstall({app: fakeApp2});
++  Preferences.set("services.aitc.client.lastModified", "" + Date.now());
++
++  let manager = new AitcManager(function() {
++    let checkQueue = {
++      callback: function() {
++        do_check_eq(manager._pending.length, 0);
++        run_next_test();
++      }
++    };
++    CommonUtils.namedTimer(checkQueue.callback, 100, checkQueue, "timer");
++  });
++});
+diff --git a/services/aitc/tests/unit/xpcshell.ini b/services/aitc/tests/unit/xpcshell.ini
+--- a/services/aitc/tests/unit/xpcshell.ini
++++ b/services/aitc/tests/unit/xpcshell.ini
+@@ -1,7 +1,8 @@
+ [DEFAULT]
+ head = ../../../common/tests/unit/head_global.js ../../../common/tests/unit/head_helpers.js
+ tail =
+ 
+ [test_load_modules.js]
++[test_manager.js]
+ [test_storage_queue.js]
+ [test_storage_registry.js]
