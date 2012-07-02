@@ -1,7 +1,7 @@
 # HG changeset patch
-# Parent dc55fe9fdaece61b06766eeac801062af56d2488
+# Parent 755170ad5831093db1ccd760964a31c3ae25973e
 # User Anant Narayanan <anant@kix.in>
-Use CommonUtils.json* for AitcQueue
+try: -b do -p all -u all -t all
 
 diff --git a/services/aitc/modules/storage.js b/services/aitc/modules/storage.js
 --- a/services/aitc/modules/storage.js
@@ -144,7 +144,7 @@ diff --git a/services/aitc/modules/storage.js b/services/aitc/modules/storage.js
 +        cb(msg);
 +        return;
 +      }
-+      self._log.info("_putFile succeeded");
++      this._log.info("_putFile succeeded");
        this._writeLock = false;
 -      cb(msg);
 -    }
@@ -158,3 +158,51 @@ diff --git a/services/aitc/modules/storage.js b/services/aitc/modules/storage.js
   * remote changes received and apply them to the local registry.
   */
  function AitcStorageImpl() {
+diff --git a/services/aitc/tests/unit/test_storage_queue.js b/services/aitc/tests/unit/test_storage_queue.js
+--- a/services/aitc/tests/unit/test_storage_queue.js
++++ b/services/aitc/tests/unit/test_storage_queue.js
+@@ -2,16 +2,17 @@
+    http://creativecommons.org/publicdomain/zero/1.0/ */
+ 
+ Cu.import("resource://services-aitc/storage.js");
+ Cu.import("resource://services-common/async.js");
+ 
+ let queue = null;
+ 
+ function run_test() {
++  initTestLogging();
+   queue = new AitcQueue("test", run_next_test);
+ }
+ 
+ add_test(function test_queue_create() {
+   do_check_eq(queue._queue.length, 0);
+   do_check_eq(queue._writeLock, false);
+   run_next_test();
+ });
+@@ -92,26 +93,24 @@ add_test(function test_queue_multiaddrem
+   let queue2 = new AitcQueue("test", function(done) {
+     do_check_true(done);
+     do_check_eq(queue2.length, queue.length);
+     do_check_eq(JSON.stringify(queue._queue), JSON.stringify(queue2._queue));
+     run_next_test();
+   });
+ });
+ 
+-/* TODO Bug 760905 - Temporarily disabled for orange.
+ add_test(function test_queue_writelock() {
+   // Queue should not enqueue or dequeue if lock is enabled.
+   queue._writeLock = true;
+   let len = queue.length;
+ 
+   queue.enqueue("writeLock test", function(err, done) {
+     do_check_eq(err.toString(), "Error: _putFile already in progress");
+     do_check_eq(queue.length, len);
+ 
+     queue.dequeue(function(err, done) {
+       do_check_eq(err.toString(), "Error: _putFile already in progress");
+       do_check_eq(queue.length, len);
+       run_next_test();
+     });
+   });
+ });
+-*/
