@@ -1,0 +1,126 @@
+# HG changeset patch
+# Parent 5099eb0d0287ed8214ce5c650e43ec2eb8322bcc
+# User Anant Narayanan <anant@kix.in>
+try: -b do -p all -u all -t all
+
+diff --git a/services/common/rest.js b/services/common/rest.js
+--- a/services/common/rest.js
++++ b/services/common/rest.js
+@@ -143,16 +143,24 @@ RESTRequest.prototype = {
+    * Request timeout (in seconds, though decimal values can be used for
+    * up to millisecond granularity.)
+    *
+    * 0 for no timeout.
+    */
+   timeout: null,
+ 
+   /**
++   * The encoding with which the response to this request must be treated.
++   * If a charset parameter is available in the HTTP Content-Type header for
++   * this response, that will always be used, and this value is ignored. If
++   * this value is not set (i.e. set to null), we default to UTF-8.
++   */
++  charset: null,
++
++  /**
+    * Called when the request has been completed, including failures and
+    * timeouts.
+    *
+    * @param error
+    *        Error that occurred while making the request, null if there
+    *        was no error.
+    */
+   onComplete: function onComplete(error) {
+@@ -305,16 +313,20 @@ RESTRequest.prototype = {
+       let type = headers["content-type"] || "text/plain";
+       channel.QueryInterface(Ci.nsIUploadChannel);
+       channel.setUploadStream(stream, type, data.length);
+     }
+     // We must set this after setting the upload stream, otherwise it
+     // will always be 'PUT'. Yeah, I know.
+     channel.requestMethod = method;
+ 
++    // Before opening the channel, set the charset that serves as a hint
++    // as to what the response might be encoded as.
++    channel.contentCharset = this.charset ? this.charset : "utf-8";
++
+     // Blast off!
+     channel.asyncOpen(this, null);
+     this.status = this.SENT;
+     this.delayTimeout();
+     return this;
+   },
+ 
+   /**
+@@ -364,28 +376,18 @@ RESTRequest.prototype = {
+     this._log.trace("onStartRequest: " + channel.requestMethod + " " +
+                     channel.URI.spec);
+ 
+     // Create a response object and fill it with some data.
+     let response = this.response = new RESTResponse();
+     response.request = this;
+     response.body = "";
+ 
+-    // Define this here so that we don't have make a new one each time
+-    // onDataAvailable() gets called. If the Content-Type specified a charset,
+-    // make sure we use the correct converter stream, instead of a generic
+-    // ScriptableInputStream (onDataAvailable will pick the right one).
+-    if (channel.contentCharset) {
+-      response.charset = channel.contentCharset;
+-      this._converterStream = Cc["@mozilla.org/intl/converter-input-stream;1"]
+-                                .createInstance(Ci.nsIConverterInputStream);
+-    } else {
+-      this._inputStream = Cc["@mozilla.org/scriptableinputstream;1"]
+-                          .createInstance(Ci.nsIScriptableInputStream);
+-    }
++    this._converterStream = Cc["@mozilla.org/intl/converter-input-stream;1"]
++                            .createInstance(Ci.nsIConverterInputStream);
+     this.delayTimeout();
+   },
+ 
+   onStopRequest: function onStopRequest(channel, context, statusCode) {
+     if (this.timeoutTimer) {
+       // Clear the abort timer now that the channel is done.
+       this.timeoutTimer.clear();
+     }
+@@ -437,30 +439,27 @@ RESTRequest.prototype = {
+ 
+     delete this._inputStream;
+ 
+     this.onComplete(null);
+     this.onComplete = this.onProgress = null;
+   },
+ 
+   onDataAvailable: function onDataAvailable(req, cb, stream, off, count) {
++    // response.charset should always be set to a value, since we provided a
++    // hint at dispatch.
+     try {
+-      if (this._inputStream) {
+-        this._inputStream.init(stream);
+-        this.response.body += this._inputStream.read(count);
+-      } else {
+-        let str = {};
+-        this._converterStream.init(
+-          stream, this.response.charset, 0,
+-          this._converterStream.DEFAULT_REPLACEMENT_CHARACTER
+-        );
+-        let num = this._converterStream.readString(count, str);
+-        if (num != 0) {
+-          this.response.body += str.value;
+-        }
++      let str = {};
++      this._converterStream.init(
++        stream, this.response.charset, 0,
++        this._converterStream.DEFAULT_REPLACEMENT_CHARACTER
++      );
++      let num = this._converterStream.readString(count, str);
++      if (num != 0) {
++        this.response.body += str.value;
+       }
+     } catch (ex) {
+       this._log.warn("Exception thrown reading " + count +
+                      " bytes from the channel.");
+       this._log.debug(CommonUtils.exceptionStr(ex));
+       throw ex;
+     }
+ 
