@@ -1,29 +1,10 @@
 # HG changeset patch
-# Parent 9e5967a09ac10798c878381ff4ad40acbd327f05
+# Parent 835874f56f36464b9cfbb45081661188d91c2364
 
 diff --git a/dom/apps/src/Webapps.jsm b/dom/apps/src/Webapps.jsm
 --- a/dom/apps/src/Webapps.jsm
 +++ b/dom/apps/src/Webapps.jsm
-@@ -193,17 +193,17 @@ let DOMApplicationRegistry = {
- 
-     let dir = FileUtils.getDir(DIRECTORY_NAME, ["webapps", id], true, true);
-     let manFile = dir.clone();
-     manFile.append("manifest.webapp");
-     this._writeFile(manFile, JSON.stringify(app.manifest));
-     this.webapps[id] = appObject;
- 
-     appObject.status = "installed";
--    
-+
-     let manifest = new DOMApplicationManifest(app.manifest, app.origin);
- 
-     if (!aFromSync)
-       this._saveApps((function() {
-         ppmm.sendAsyncMessage("Webapps:Install:Return:OK", aData);
-         Services.obs.notifyObservers(this, "webapps-sync-install", appNote);
-       }).bind(this));
- 
-@@ -367,17 +367,17 @@ let DOMApplicationRegistry = {
+@@ -604,17 +604,17 @@ let DOMApplicationRegistry = {
    /** Added to support AITC and classic sync */
    itemExists: function(aId) {
      return !!this.webapps[aId];
@@ -42,25 +23,60 @@ diff --git a/dom/apps/src/Webapps.jsm b/dom/apps/src/Webapps.jsm
      // This could be O(1) if |webapps| was a dictionary indexed on manifestURL
      // which should be the unique app identifier.
      // It's currently O(n).
-@@ -385,17 +385,17 @@ let DOMApplicationRegistry = {
-       let app = this.webapps[id];
-       if (app.manifestURL == aManifestURL) {
-         return this._cloneAppObject(app);
-       }
-     }
+diff --git a/services/aitc/modules/browserid.js b/services/aitc/modules/browserid.js
+--- a/services/aitc/modules/browserid.js
++++ b/services/aitc/modules/browserid.js
+@@ -133,16 +133,21 @@ BrowserIDService.prototype = {
+   /**
+    * Internal implementation methods begin here
+    */
  
-     return null;
-   },
--  
+   // Try to get the user's email(s). If user isn't logged in, this will be empty
+   _getEmails: function _getEmails(cb, options, sandbox) {
+     let self = this;
+ 
++    if (!sandbox) {
++      cb(new Error("Sandbox not created"), null);
++      return;
++    }
 +
-   getAllWithoutManifests: function(aCallback) {
-     let result = {};
-     for (let id in this.webapps) {
-       let app = this._cloneAppObject(this.webapps[id]);
-       result[id] = app;
-     }
-     aCallback(result);
-   },
+     function callback(res) {
+       let emails = {};
+       try {
+         emails = JSON.parse(res);
+       } catch (e) {
+         self._log.error("Exception in JSON.parse for _getAssertion: " + e);
+       }
+       self._gotEmails(emails, sandbox, cb, options);
+@@ -377,18 +382,26 @@ BrowserIDService.prototype = {
+  *
+  * @param cb
+  *        (function) Callback to be invoked with a Sandbox, when ready.
+  * @param uri
+  *        (String) URI to be loaded in the Sandbox.
+  */
+ function Sandbox(cb, uri) {
+   this._uri = uri;
+-  this._createFrame();
+-  this._createSandbox(cb, uri);
++
++  try {
++    this._createFrame();
++    this._createSandbox(cb, uri);
++  } catch(e) {
++    this._log = Log4Moz.repository.getLogger("Service.AITC.BrowserID.Sandbox");
++    this._log.level = Log4Moz.Level[PREFS.get("log")];
++    this._log.error("Could not create Sandbox " + e);
++    cb(null);
++  }
+ }
+ Sandbox.prototype = {
+   /**
+    * Frees the sandbox and releases the iframe created to host it.
+    */
+   free: function free() {
+     delete this.box;
+     this._container.removeChild(this._frame);
 diff --git a/services/aitc/modules/client.js b/services/aitc/modules/client.js
 --- a/services/aitc/modules/client.js
 +++ b/services/aitc/modules/client.js
@@ -86,32 +102,52 @@ diff --git a/services/aitc/modules/client.js b/services/aitc/modules/client.js
 diff --git a/services/aitc/modules/main.js b/services/aitc/modules/main.js
 --- a/services/aitc/modules/main.js
 +++ b/services/aitc/modules/main.js
-@@ -27,18 +27,19 @@ function Aitc() {
+@@ -23,24 +23,37 @@ function Aitc() {
+     "services.aitc.service.log.level"
+   )];
+   this._log.info("Loading AitC");
+ 
    this.DASHBOARD_ORIGIN = CommonUtils.makeURI(
      Preferences.get("services.aitc.dashboard.url")
    ).prePath;
  
-   this._manager = new AitcManager(this._init.bind(this));
+-  this._manager = new AitcManager(this._init.bind(this));
++  let self = this;
++  this._manager = new AitcManager(function managerDone() {
++    CommonUtils.nextTick(self._init, self);
++  });
  }
  Aitc.prototype = {
    // The goal of the init function is to be ready to activate the AITC
 -  // client whenever the user is looking at the dashboard.
 -  _init: function init() {
 +  // client whenever the user is looking at the dashboard. It also calls
-+  // the init function on the manager.
++  // the initialSchedule function on the manager.
 +  _init: function _init() {
      let self = this;
  
++    // Do an initial upload.
++    this._manager.initialSchedule(function queueDone(num) {
++      if (num == -1) {
++        self._log.debug("No initial upload was required");
++        return;
++      }
++      self._log.debug(num + " initial apps queued successfully");
++    });
++
      // This is called iff the user is currently looking the dashboard.
      function dashboardLoaded(browser) {
        let win = browser.contentWindow;
        self._log.info("Dashboard was accessed " + win);
  
        // If page is ready to go, fire immediately.
+       if (win.document && win.document.readyState == "complete") {
+         self._manager.userActive(win);
 diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
 --- a/services/aitc/modules/manager.js
 +++ b/services/aitc/modules/manager.js
-@@ -50,23 +50,18 @@ function AitcManager(cb) {
+@@ -49,24 +49,16 @@ function AitcManager(cb) {
+   this._pending = new AitcQueue("webapps-pending.json", function _queueDone() {
      // Inform the AitC service that we're good to go!
      self._log.info("AitC manager has finished loading");
      try {
@@ -119,7 +155,7 @@ diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
      } catch (e) {
        self._log.error(new Error("AitC manager callback threw " + e));
      }
- 
+-
 -    // Schedule them, but only if we can get a silent assertion.
 -    self._makeClient(function(err, client) {
 -      if (!err && client) {
@@ -127,8 +163,6 @@ diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
 -        self._processQueue();
 -      }
 -    }, false);
-+    // Do intial PUT/GET on the next tick.
-+    CommonUtils.nextTick(self._initialSchedule, self);
    });
  }
  AitcManager.prototype = {
@@ -137,7 +171,7 @@ diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
     * PASSIVE means either not at the dashboard or the idle timer started.
     */
    _ACTIVE: 1,
-@@ -153,16 +148,69 @@ AitcManager.prototype = {
+@@ -153,16 +145,81 @@ AitcManager.prototype = {
     * page, a call to userActive MUST be made.
     */
    userIdle: function userIdle() {
@@ -146,27 +180,39 @@ diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
    },
  
    /**
-+   * Initial schedule for the manager. This will be called by the
-+   * constructor after the queue has been initialized.
++   * Initial schedule for the manager. It is the responsibility of the
++   * caller who created this object to call this function if it wants to
++   * do an initial sync (i.e. upload local apps on a device that has never
++   * communicated with AITC before).
++   *
++   * The callback will be invoked with the number of local apps that were
++   * queued to be uploaded, or -1 if this client has already synced and a
++   * local upload is not required.
 +   *
 +   * Try to schedule PUTs but only if we can get a silent assertion, and if
 +   * the queue in non-empty, or we've never done a GET (first run).
 +   */
-+  _initialSchedule: function _initialSchedule() {
++  initialSchedule: function initialSchedule(cb) {
 +    let self = this;
 +
-+    function startProcessQueue() {
++    function startProcessQueue(num) {
 +      self._makeClient(function(err, client) {
 +        if (!err && client) {
 +          self._client = client;
 +          self._processQueue();
++          return;
 +        }
 +      });
++      cb(num);
 +    }
 +
++    // If we've already done a sync with AITC, it means we've already done
++    // an initial upload. Resume processing the queue, if there are items in it.
 +    if (Preferences.get("services.aitc.client.lastModified", "0") != "0") {
 +      if (this._pending.length) {
-+        startProcessQueue();
++        startProcessQueue(-1);
++      } else {
++        cb(-1);
 +      }
 +      return;
 +    }
@@ -184,7 +230,7 @@ diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
 +
 +        if (done == total) {
 +          self._log.info("Finished queuing all initial local apps");
-+          startProcessQueue();
++          startProcessQueue(total);
 +          return;
 +        }
 +
@@ -207,7 +253,7 @@ diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
     */
    _setPoll: function _setPoll() {
      if (this._state == this._ACTIVE && !this._client) {
-@@ -180,17 +228,17 @@ AitcManager.prototype = {
+@@ -180,17 +237,17 @@ AitcManager.prototype = {
  
      // Check if there are any PUTs pending first.
      if (this._pending.length && !(this._putTimer)) {
@@ -226,7 +272,7 @@ diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
      } else {
        getFreq = PREFS.get("manager.getPassiveFreq");
      }
-@@ -426,24 +474,24 @@ AitcManager.prototype = {
+@@ -426,24 +483,24 @@ AitcManager.prototype = {
          return;
        }
  
@@ -253,10 +299,29 @@ diff --git a/services/aitc/modules/manager.js b/services/aitc/modules/manager.js
  
      let options = { audience: DASHBOARD_URL };
      if (this._lastEmail) {
+@@ -476,17 +533,17 @@ AitcManager.prototype = {
+   // Token recieved from _getToken.
+   _gotToken: function _gotToken(err, tok, cb) {
+     if (!err) {
+       this._log.info("Got token from server: " + JSON.stringify(tok));
+       cb(null, tok);
+       return;
+     }
+ 
+-    let msg = err.name + " in _getToken: " + err.error;
++    let msg = "Error in _getToken: " + err;
+     this._log.error(msg);
+     cb(msg, null);
+   },
+ 
+   // Extract the email address from a BrowserID assertion.
+   _extractEmail: function _extractEmail(assertion) {
+     // Please look the other way while I do this. Thanks.
+     let chain = assertion.split("~");
 diff --git a/services/aitc/modules/storage.js b/services/aitc/modules/storage.js
 --- a/services/aitc/modules/storage.js
 +++ b/services/aitc/modules/storage.js
-@@ -327,17 +327,17 @@ AitcStorageImpl.prototype = {
+@@ -278,17 +278,17 @@ AitcStorageImpl.prototype = {
      }
  
      // Apply uninstalls first, we do not need to fetch manifests.
@@ -275,11 +340,11 @@ diff --git a/services/aitc/modules/storage.js b/services/aitc/modules/storage.js
        });
  
        return;
-diff --git a/services/aitc/tests/unit/test_manager.js b/services/aitc/tests/unit/test_manager.js
+diff --git a/services/aitc/tests/unit/test_aitc_manager.js b/services/aitc/tests/unit/test_aitc_manager.js
 new file mode 100644
 --- /dev/null
-+++ b/services/aitc/tests/unit/test_manager.js
-@@ -0,0 +1,89 @@
++++ b/services/aitc/tests/unit/test_aitc_manager.js
+@@ -0,0 +1,93 @@
 +/* Any copyright is dedicated to the Public Domain.
 +   http://creativecommons.org/publicdomain/zero/1.0/ */
 +
@@ -324,6 +389,7 @@ new file mode 100644
 +};
 +
 +function run_test() {
++  initTestLogging();
 +  run_next_test();
 +}
 +
@@ -334,24 +400,25 @@ new file mode 100644
 +
 +  // Create an instance of the manager and check if it put the app in the queue.
 +  let manager = new AitcManager(function() {
-+    // Here's where it gets ugly, the manager will add local apps to the queue
-+    // asynchronously, so we don't know for sure when to check if the app was
-+    // added. We'll wait for arbritrary 100ms (intermittent orange warning!).
-+    let checkQueue = {
-+      callback: function() {
-+        do_check_eq(manager._pending.length, 2);
-+        let entry = manager._pending.peek();
-+        do_check_eq(entry.type, "install");
-+        do_check_eq(entry.app.origin, fakeApp1.origin);
-+
-+        // Reset the queue, so the next test is clean.
-+        manager._pending.dequeue(function() {
-+          manager._pending.dequeue(run_next_test);
-+        });
-+      }
-+    };
-+    CommonUtils.namedTimer(checkQueue.callback, 100, checkQueue, "timer");
++    CommonUtils.nextTick(doInitialUpload);
 +  });
++
++  function doInitialUpload() {
++    manager.initialSchedule(function(num) {
++      // 2 apps should have been queued.
++      do_check_eq(num, 2);
++      do_check_eq(manager._pending.length, 2);
++
++      let entry = manager._pending.peek();
++      do_check_eq(entry.type, "install");
++      do_check_eq(entry.app.origin, fakeApp1.origin);
++
++      // Reset the queue, so the next test is clean.
++      manager._pending.dequeue(function() {
++        manager._pending.dequeue(run_next_test);
++      });
++    });
++  }
 +});
 +
 +add_test(function test_manager_alreadysynced() {
@@ -360,24 +427,28 @@ new file mode 100644
 +  Preferences.set("services.aitc.client.lastModified", "" + Date.now());
 +
 +  let manager = new AitcManager(function() {
-+    let checkQueue = {
-+      callback: function() {
-+        do_check_eq(manager._pending.length, 0);
-+        run_next_test();
-+      }
-+    };
-+    CommonUtils.namedTimer(checkQueue.callback, 100, checkQueue, "timer");
++    CommonUtils.nextTick(doCheck);
 +  });
++
++  function doCheck() {
++    manager.initialSchedule(function(num) {
++      do_check_eq(num, -1);
++      do_check_eq(manager._pending.length, 0);
++      run_next_test();
++    });
++  }
 +});
 diff --git a/services/aitc/tests/unit/xpcshell.ini b/services/aitc/tests/unit/xpcshell.ini
 --- a/services/aitc/tests/unit/xpcshell.ini
 +++ b/services/aitc/tests/unit/xpcshell.ini
-@@ -1,7 +1,8 @@
+@@ -1,8 +1,9 @@
  [DEFAULT]
- head = ../../../common/tests/unit/head_global.js ../../../common/tests/unit/head_helpers.js
+ head = ../../../common/tests/unit/head_global.js ../../../common/tests/unit/head_helpers.js ../../../common/tests/unit/head_http.js
  tail =
  
  [test_load_modules.js]
-+[test_manager.js]
++[test_aitc_client.js]
++[test_aitc_manager.js]
  [test_storage_queue.js]
  [test_storage_registry.js]
+-[test_aitc_client.js]
